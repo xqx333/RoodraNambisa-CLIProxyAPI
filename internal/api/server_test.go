@@ -69,6 +69,27 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+func TestV1InternalMethodRequiresAuth(t *testing.T) {
+	server := newTestServer(t)
+
+	unauthorizedReq := httptest.NewRequest(http.MethodPost, "/v1internal:method", strings.NewReader(`{}`))
+	unauthorizedReq.Header.Set("Content-Type", "application/json")
+	unauthorizedRec := httptest.NewRecorder()
+	server.engine.ServeHTTP(unauthorizedRec, unauthorizedReq)
+	if unauthorizedRec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d, want %d; body=%s", unauthorizedRec.Code, http.StatusUnauthorized, unauthorizedRec.Body.String())
+	}
+
+	authorizedReq := httptest.NewRequest(http.MethodPost, "/v1internal:method", strings.NewReader(`{}`))
+	authorizedReq.Header.Set("Content-Type", "application/json")
+	authorizedReq.Header.Set("Authorization", "Bearer test-key")
+	authorizedRec := httptest.NewRecorder()
+	server.engine.ServeHTTP(authorizedRec, authorizedReq)
+	if authorizedRec.Code == http.StatusUnauthorized {
+		t.Fatalf("authorized request unexpectedly returned 401; body=%s", authorizedRec.Body.String())
+	}
+}
+
 func TestAmpProviderModelRoutes(t *testing.T) {
 	testCases := []struct {
 		name         string

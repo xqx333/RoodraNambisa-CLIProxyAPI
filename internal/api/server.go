@@ -53,6 +53,7 @@ type serverOptionConfig struct {
 	keepAliveTimeout     time.Duration
 	keepAliveOnTimeout   func()
 	postAuthHook         auth.PostAuthHook
+	authStatusHook       auth.AuthStatusHook
 }
 
 // ServerOption customises HTTP server construction.
@@ -115,6 +116,13 @@ func WithRequestLoggerFactory(factory func(*config.Config, string) logging.Reque
 func WithPostAuthHook(hook auth.PostAuthHook) ServerOption {
 	return func(cfg *serverOptionConfig) {
 		cfg.postAuthHook = hook
+	}
+}
+
+// WithAuthStatusHook registers a hook to be called after auth status changes.
+func WithAuthStatusHook(hook auth.AuthStatusHook) ServerOption {
+	return func(cfg *serverOptionConfig) {
+		cfg.authStatusHook = hook
 	}
 }
 
@@ -273,6 +281,9 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	if optionState.postAuthHook != nil {
 		s.mgmt.SetPostAuthHook(optionState.postAuthHook)
 	}
+	if optionState.authStatusHook != nil {
+		s.mgmt.SetAuthStatusHook(optionState.authStatusHook)
+	}
 	s.localPassword = optionState.localPassword
 
 	// Setup routes
@@ -364,7 +375,7 @@ func (s *Server) setupRoutes() {
 			},
 		})
 	})
-	s.engine.POST("/v1internal:method", geminiCLIHandlers.CLIHandler)
+	s.engine.POST("/v1internal:method", AuthMiddleware(s.accessManager), geminiCLIHandlers.CLIHandler)
 
 	// OAuth callback endpoints (reuse main server port)
 	// These endpoints receive provider redirects and persist

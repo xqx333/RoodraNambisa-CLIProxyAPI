@@ -185,7 +185,10 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 
 	requestedModel := helps.PayloadRequestedModel(opts, req.Model)
 	body = helps.ApplyPayloadConfigWithRoot(e.cfg, baseModel, to.String(), "", body, originalTranslated, requestedModel)
-	body, _ = sjson.SetBytes(body, "model", baseModel)
+	body, err = sjson.SetBytes(body, "model", baseModel)
+	if err != nil {
+		return resp, fmt.Errorf("codex websockets executor: set base model in request body: %w", err)
+	}
 	body, _ = sjson.SetBytes(body, "stream", true)
 	body, _ = sjson.DeleteBytes(body, "previous_response_id")
 	body, _ = sjson.DeleteBytes(body, "prompt_cache_retention")
@@ -388,6 +391,10 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 
 	requestedModel := helps.PayloadRequestedModel(opts, req.Model)
 	body = helps.ApplyPayloadConfigWithRoot(e.cfg, baseModel, to.String(), "", body, body, requestedModel)
+	body, err = sjson.SetBytes(body, "model", baseModel)
+	if err != nil {
+		return nil, fmt.Errorf("codex websockets executor: set base model in request body: %w", err)
+	}
 
 	httpURL := strings.TrimSuffix(baseURL, "/") + "/responses"
 	wsURL, err := buildCodexResponsesWebsocketURL(httpURL)
@@ -821,7 +828,7 @@ func applyCodexWebsocketHeaders(ctx context.Context, headers http.Header, auth *
 		ginHeaders = ginCtx.Request.Header.Clone()
 	}
 
-	_, cfgBetaFeatures := codexHeaderDefaults(cfg, auth)
+	cfgUserAgent, cfgBetaFeatures := codexHeaderDefaults(cfg, auth)
 	ensureHeaderWithPriority(headers, ginHeaders, "x-codex-beta-features", cfgBetaFeatures, "")
 	misc.EnsureHeader(headers, ginHeaders, "x-codex-turn-state", "")
 	misc.EnsureHeader(headers, ginHeaders, "x-codex-turn-metadata", "")
@@ -837,7 +844,18 @@ func applyCodexWebsocketHeaders(ctx context.Context, headers http.Header, auth *
 		betaHeader = codexResponsesWebsocketBetaHeaderValue
 	}
 	headers.Set("OpenAI-Beta", betaHeader)
-	if strings.Contains(headers.Get("User-Agent"), "Mac OS") {
+
+	effectiveUserAgent := strings.TrimSpace(headers.Get("User-Agent"))
+	if effectiveUserAgent == "" && ginHeaders != nil {
+		effectiveUserAgent = strings.TrimSpace(ginHeaders.Get("User-Agent"))
+	}
+	if effectiveUserAgent == "" {
+		effectiveUserAgent = strings.TrimSpace(cfgUserAgent)
+	}
+	if effectiveUserAgent == "" {
+		effectiveUserAgent = codexUserAgent
+	}
+	if strings.Contains(effectiveUserAgent, "Mac OS") {
 		misc.EnsureHeader(headers, ginHeaders, "Session_id", uuid.NewString())
 	}
 	headers.Del("User-Agent")
@@ -1274,6 +1292,10 @@ func (e *CodexWebsocketsExecutor) CloseExecutionSession(sessionID string) {
 	e.closeExecutionSession(sess, "session_closed")
 }
 
+func (e *CodexWebsocketsExecutor) CloseAuthExecutionSessions(authID string, reason string) {
+	CloseCodexWebsocketSessionsForAuthID(authID, reason)
+}
+
 func (e *CodexWebsocketsExecutor) closeAllExecutionSessions(reason string) {
 	if e == nil {
 		return
@@ -1478,6 +1500,10 @@ func (e *CodexAutoExecutor) CloseExecutionSession(sessionID string) {
 		return
 	}
 	e.wsExec.CloseExecutionSession(sessionID)
+}
+
+func (e *CodexAutoExecutor) CloseAuthExecutionSessions(authID string, reason string) {
+	CloseCodexWebsocketSessionsForAuthID(authID, reason)
 }
 
 func codexWebsocketsEnabled(auth *cliproxyauth.Auth) bool {
