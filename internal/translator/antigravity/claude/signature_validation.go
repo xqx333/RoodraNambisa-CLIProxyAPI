@@ -55,6 +55,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/cache"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 	"google.golang.org/protobuf/encoding/protowire"
 )
 
@@ -70,6 +71,56 @@ type claudeSignatureTree struct {
 	ModelText           string
 	LegacyRouteHint     string
 	HasField7           bool
+}
+
+// StripEmptySignatureThinkingBlocks removes thinking blocks whose signatures
+// are empty after trimming and stripping any optional cache prefix. This keeps
+// invalid-but-present signatures intact so strict bypass validation can still
+// reject them before the upstream request is sent.
+func StripEmptySignatureThinkingBlocks(payload []byte) []byte {
+	messages := gjson.GetBytes(payload, "messages")
+	if !messages.IsArray() {
+		return payload
+	}
+	modified := false
+	for i, msg := range messages.Array() {
+		content := msg.Get("content")
+		if !content.IsArray() {
+			continue
+		}
+		var kept []string
+		stripped := false
+		for _, part := range content.Array() {
+			if part.Get("type").String() == "thinking" && hasEmptyClaudeSignature(part.Get("signature").String()) {
+				stripped = true
+				continue
+			}
+			kept = append(kept, part.Raw)
+		}
+		if stripped {
+			modified = true
+			if len(kept) == 0 {
+				payload, _ = sjson.SetRawBytes(payload, fmt.Sprintf("messages.%d.content", i), []byte("[]"))
+			} else {
+				payload, _ = sjson.SetRawBytes(payload, fmt.Sprintf("messages.%d.content", i), []byte("["+strings.Join(kept, ",")+"]"))
+			}
+		}
+	}
+	if !modified {
+		return payload
+	}
+	return payload
+}
+
+func hasEmptyClaudeSignature(sig string) bool {
+	sig = strings.TrimSpace(sig)
+	if sig == "" {
+		return true
+	}
+	if idx := strings.IndexByte(sig, '#'); idx >= 0 {
+		sig = strings.TrimSpace(sig[idx+1:])
+	}
+	return sig == ""
 }
 
 func ValidateClaudeBypassSignatures(inputRawJSON []byte) error {
