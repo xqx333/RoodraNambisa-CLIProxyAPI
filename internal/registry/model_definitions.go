@@ -61,12 +61,12 @@ func GetCodexTeamModels() []*ModelInfo {
 
 // GetCodexPlusModels returns model definitions for the Codex plus plan tier.
 func GetCodexPlusModels() []*ModelInfo {
-	return cloneModelInfos(getModels().CodexPlus)
+	return filterModelInfos(cloneModelInfos(getModels().CodexPlus), codexSparkModelID)
 }
 
 // GetCodexProModels returns model definitions for the Codex pro plan tier.
 func GetCodexProModels() []*ModelInfo {
-	return filterModelInfos(cloneModelInfos(getModels().CodexPro), codexSparkModelID)
+	return cloneModelInfos(getModels().CodexPro)
 }
 
 // GetIFlowModels returns the standard iFlow model definitions.
