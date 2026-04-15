@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+const codexSparkModelID = "gpt-5.3-codex-spark"
+
 // staticModelsJSON mirrors the top-level structure of models.json.
 type staticModelsJSON struct {
 	Claude      []*ModelInfo `json:"claude"`
@@ -64,7 +66,7 @@ func GetCodexPlusModels() []*ModelInfo {
 
 // GetCodexProModels returns model definitions for the Codex pro plan tier.
 func GetCodexProModels() []*ModelInfo {
-	return cloneModelInfos(getModels().CodexPro)
+	return filterModelInfos(cloneModelInfos(getModels().CodexPro), codexSparkModelID)
 }
 
 // GetIFlowModels returns the standard iFlow model definitions.
@@ -90,6 +92,37 @@ func cloneModelInfos(models []*ModelInfo) []*ModelInfo {
 	out := make([]*ModelInfo, len(models))
 	for i, m := range models {
 		out[i] = cloneModelInfo(m)
+	}
+	return out
+}
+
+func filterModelInfos(models []*ModelInfo, excludedIDs ...string) []*ModelInfo {
+	if len(models) == 0 || len(excludedIDs) == 0 {
+		return models
+	}
+	excluded := make(map[string]struct{}, len(excludedIDs))
+	for _, id := range excludedIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		excluded[id] = struct{}{}
+	}
+	if len(excluded) == 0 {
+		return models
+	}
+	out := make([]*ModelInfo, 0, len(models))
+	for _, model := range models {
+		if model == nil {
+			continue
+		}
+		if _, skip := excluded[strings.TrimSpace(model.ID)]; skip {
+			continue
+		}
+		out = append(out, model)
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
