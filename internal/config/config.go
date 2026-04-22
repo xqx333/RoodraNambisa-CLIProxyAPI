@@ -639,7 +639,7 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	cfg.RemoteManagement.PanelGitHubRepository = DefaultPanelGitHubRepository
 	cfg.Images.CodexModel = "gpt-5.4"
 	cfg.Images.ImageModel = "gpt-image-2"
-	defaultImagesNAggregation := true
+	defaultImagesNAggregation := false
 	cfg.Images.EnableNAggregation = &defaultImagesNAggregation
 	cfg.Images.UnsupportedStatusCode = http.StatusBadRequest
 	if err = yaml.Unmarshal(data, &cfg); err != nil {
@@ -694,7 +694,7 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 		cfg.Images.ImageModel = "gpt-image-2"
 	}
 	if cfg.Images.EnableNAggregation == nil {
-		enableNAggregation := true
+		enableNAggregation := false
 		cfg.Images.EnableNAggregation = &enableNAggregation
 	}
 	if cfg.Images.UnsupportedStatusCode < http.StatusBadRequest || cfg.Images.UnsupportedStatusCode > 599 {

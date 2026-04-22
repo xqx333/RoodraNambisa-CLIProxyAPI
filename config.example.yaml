@@ -139,8 +139,9 @@ nonstream-keepalive-interval: 0
 # images:
 #   codex-model: "gpt-5.4"          # Outer Responses model used to invoke the image tool.
 #   image-model: "gpt-image-2"      # image_generation tool model exposed by /v1/images/*.
-#   enable-n-aggregation: true      # Split n > 1 into multiple Codex image calls and aggregate results.
+#   enable-n-aggregation: false     # Split n > 1 into multiple Codex image calls and aggregate results.
 #   unsupported-status-code: 400    # Status code for unsupported image options such as response_format=url.
+#   override-unsupported-params: false # Coerce response_format=url to b64_json and background=transparent to auto.
 # Streaming behavior (SSE keep-alives + safe bootstrap retries).
 # streaming:
 #   keepalive-seconds: 15   # Default: 0 (disabled). <= 0 disables keep-alives.

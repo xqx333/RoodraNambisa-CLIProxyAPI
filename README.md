@@ -80,19 +80,21 @@
 images:
   codex-model: "gpt-5.4"
   image-model: "gpt-image-2"
-  enable-n-aggregation: true
+  enable-n-aggregation: false
   unsupported-status-code: 400
+  override-unsupported-params: false
 ```
 
 说明：
 
 - `model` 默认支持 `gpt-image-2`；如需换成其他 Codex 支持的图片 tool 模型，修改 `images.image-model`，请求里的 `model` 也要使用同一个值。
-- `response_format=url` 不支持，接口固定返回 `b64_json`；如果请求传入 `url`，会直接返回错误。
-- `background=transparent` 不支持，会直接返回错误。
+- `response_format=url` 不支持，接口固定返回 `b64_json`；默认请求传入 `url` 会直接返回错误。开启 `override-unsupported-params` 后会自动按 `b64_json` 处理。
+- `background=transparent` 不支持，默认会直接返回错误。开启 `override-unsupported-params` 后会自动改成 `auto` 再转发给 Codex。
 - `edits` 支持 multipart 的 `image` / `image[]` / `mask`，也支持 JSON 的 `images[].image_url`。
 - 暂不支持 JSON `file_id`，因为当前项目没有 OpenAI Files API 兼容层。
 - `unsupported-status-code` 控制不支持参数的错误状态码，默认 `400`。
-- `enable-n-aggregation` 默认开启。开启时，`n > 1` 会拆成多次 Codex 图片调用再聚合，非流式返回多个 `data[]` 并累加 `usage.output_tokens` 等用量字段；流式依次输出多个 `image_generation.completed` 或 `image_edit.completed` 事件。关闭时，`n > 1` 直接按不支持参数返回错误。
+- `override-unsupported-params` 默认关闭，只覆盖 `response_format=url` 和 `background=transparent`，其它不支持参数仍会返回错误。
+- `enable-n-aggregation` 默认关闭，`n > 1` 会直接按不支持参数返回错误。开启时，`n > 1` 会拆成多次 Codex 图片调用再聚合，非流式返回多个 `data[]` 并累加 `usage.output_tokens` 等用量字段；流式依次输出多个 `image_generation.completed` 或 `image_edit.completed` 事件。
 
 示例：
 

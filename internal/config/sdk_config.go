@@ -61,4 +61,6 @@ type ImagesConfig struct {
 	EnableNAggregation *bool `yaml:"enable-n-aggregation,omitempty" json:"enable-n-aggregation,omitempty"`
 	// UnsupportedStatusCode is used for unsupported Images API options.
 	UnsupportedStatusCode int `yaml:"unsupported-status-code,omitempty" json:"unsupported-status-code,omitempty"`
+	// OverrideUnsupportedParams coerces known unsupported Images API options to supported values.
+	OverrideUnsupportedParams bool `yaml:"override-unsupported-params,omitempty" json:"override-unsupported-params,omitempty"`
 }

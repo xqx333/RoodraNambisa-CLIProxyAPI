@@ -162,7 +162,7 @@ func (h *OpenAIImagesAPIHandler) Generations(c *gin.Context) {
 		h.writeImagesRequestError(c, err)
 		return
 	}
-	if err := validateImageRequest(req, imageGenerationOperation, h.imagesImageModel()); err != nil {
+	if err := h.validateImageRequest(&req, imageGenerationOperation); err != nil {
 		h.writeImagesRequestError(c, err)
 		return
 	}
@@ -176,7 +176,7 @@ func (h *OpenAIImagesAPIHandler) Edits(c *gin.Context) {
 		h.writeImagesRequestError(c, err)
 		return
 	}
-	if err := validateImageRequest(req, imageEditOperation, h.imagesImageModel()); err != nil {
+	if err := h.validateImageRequest(&req, imageEditOperation); err != nil {
 		h.writeImagesRequestError(c, err)
 		return
 	}
@@ -486,7 +486,11 @@ func parseMultipartImageEditRequest(c *gin.Context) (openAIImageRequest, error) 
 	return req, nil
 }
 
-func validateImageRequest(req openAIImageRequest, op imageOperation, imageModel string) error {
+func (h *OpenAIImagesAPIHandler) validateImageRequest(req *openAIImageRequest, op imageOperation) error {
+	if req == nil {
+		return errors.New("request is required")
+	}
+	imageModel := h.imagesImageModel()
 	imageModel = strings.TrimSpace(imageModel)
 	if imageModel == "" {
 		imageModel = defaultImagesImageModel
@@ -502,13 +506,19 @@ func validateImageRequest(req openAIImageRequest, op imageOperation, imageModel 
 		return errors.New("prompt is required")
 	}
 	if strings.EqualFold(strings.TrimSpace(req.ResponseFormat), "url") {
-		return unsupportedImageErrorf("response_format=url is not supported; use b64_json")
+		if !h.imagesOverrideUnsupportedParamsEnabled() {
+			return unsupportedImageErrorf("response_format=url is not supported; use b64_json")
+		}
+		req.ResponseFormat = "b64_json"
 	}
 	if rf := strings.TrimSpace(req.ResponseFormat); rf != "" && rf != "b64_json" {
 		return unsupportedImageErrorf("unsupported response_format %q", rf)
 	}
 	if strings.EqualFold(strings.TrimSpace(req.Background), "transparent") {
-		return unsupportedImageErrorf("background=transparent is not supported for %s", imageModel)
+		if !h.imagesOverrideUnsupportedParamsEnabled() {
+			return unsupportedImageErrorf("background=transparent is not supported for %s", imageModel)
+		}
+		req.Background = "auto"
 	}
 	n := 1
 	if req.N != nil {
@@ -891,7 +901,11 @@ func (h *OpenAIImagesAPIHandler) imagesNAggregationEnabled() bool {
 	if h != nil && h.Cfg != nil && h.Cfg.Images.EnableNAggregation != nil {
 		return *h.Cfg.Images.EnableNAggregation
 	}
-	return true
+	return false
+}
+
+func (h *OpenAIImagesAPIHandler) imagesOverrideUnsupportedParamsEnabled() bool {
+	return h != nil && h.Cfg != nil && h.Cfg.Images.OverrideUnsupportedParams
 }
 
 func (h *OpenAIImagesAPIHandler) imagesUnsupportedStatusCode() int {

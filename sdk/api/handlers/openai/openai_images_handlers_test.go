@@ -175,6 +175,8 @@ func TestOpenAIImagesGenerationsAggregatesMultipleNonStreamingImages(t *testing.
 		response: []byte(`{"created_at":1700000000,"output":[{"type":"image_generation_call","result":"aGVsbG8=","revised_prompt":"rev"}],"usage":{"input_tokens":1,"output_tokens":2,"output_tokens_details":{"image_tokens":2},"total_tokens":3}}`),
 	}
 	h := newImagesTestHandler(t, executor)
+	enableNAggregation := true
+	h.Cfg.Images.EnableNAggregation = &enableNAggregation
 	router := gin.New()
 	router.POST("/v1/images/generations", h.Generations)
 
@@ -206,12 +208,10 @@ func TestOpenAIImagesGenerationsAggregatesMultipleNonStreamingImages(t *testing.
 	}
 }
 
-func TestOpenAIImagesGenerationsCanDisableNAggregation(t *testing.T) {
+func TestOpenAIImagesGenerationsRejectsMultipleImagesByDefault(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	executor := &imageCaptureExecutor{}
 	h := newImagesTestHandler(t, executor)
-	disableNAggregation := false
-	h.Cfg.Images.EnableNAggregation = &disableNAggregation
 	h.Cfg.Images.UnsupportedStatusCode = http.StatusConflict
 	router := gin.New()
 	router.POST("/v1/images/generations", h.Generations)
@@ -244,6 +244,54 @@ func TestOpenAIImagesUnsupportedOptionsUseConfiguredStatus(t *testing.T) {
 
 	if resp.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want %d, body=%s", resp.Code, http.StatusUnprocessableEntity, resp.Body.String())
+	}
+	if executor.calls != 0 && executor.streamCalls != 0 {
+		t.Fatalf("executor calls = %d streamCalls = %d, want none", executor.calls, executor.streamCalls)
+	}
+}
+
+func TestOpenAIImagesCanOverrideUnsupportedOptions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	executor := &imageCaptureExecutor{}
+	h := newImagesTestHandler(t, executor)
+	h.Cfg.Images.OverrideUnsupportedParams = true
+	router := gin.New()
+	router.POST("/v1/images/generations", h.Generations)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-2","prompt":"draw","response_format":"url","background":"transparent"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	}
+	if executor.calls != 1 {
+		t.Fatalf("executor calls = %d, want 1", executor.calls)
+	}
+	if got := gjson.GetBytes(executor.payload, "tools.0.background").String(); got != "auto" {
+		t.Fatalf("tool background = %q, want auto", got)
+	}
+	if got := gjson.Get(resp.Body.String(), "data.0.b64_json").String(); got != "aGVsbG8=" {
+		t.Fatalf("b64_json = %q", got)
+	}
+}
+
+func TestOpenAIImagesOverrideKeepsUnknownResponseFormatUnsupported(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	executor := &imageCaptureExecutor{}
+	h := newImagesTestHandler(t, executor)
+	h.Cfg.Images.OverrideUnsupportedParams = true
+	router := gin.New()
+	router.POST("/v1/images/generations", h.Generations)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-2","prompt":"draw","response_format":"json"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body=%s", resp.Code, http.StatusBadRequest, resp.Body.String())
 	}
 	if executor.calls != 0 && executor.streamCalls != 0 {
 		t.Fatalf("executor calls = %d streamCalls = %d, want none", executor.calls, executor.streamCalls)
@@ -360,6 +408,8 @@ func TestOpenAIImagesStreamingSupportsMultipleCompletedImages(t *testing.T) {
 		},
 	}
 	h := newImagesTestHandler(t, executor)
+	enableNAggregation := true
+	h.Cfg.Images.EnableNAggregation = &enableNAggregation
 	router := gin.New()
 	router.POST("/v1/images/generations", h.Generations)
 
