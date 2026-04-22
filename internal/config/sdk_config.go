@@ -61,6 +61,10 @@ type ImagesConfig struct {
 	EnableNAggregation *bool `yaml:"enable-n-aggregation,omitempty" json:"enable-n-aggregation,omitempty"`
 	// UnsupportedStatusCode is used for unsupported Images API options.
 	UnsupportedStatusCode int `yaml:"unsupported-status-code,omitempty" json:"unsupported-status-code,omitempty"`
-	// OverrideUnsupportedParams coerces known unsupported Images API options to supported values.
+	// OverrideUnsupportedParams is a legacy shortcut for enabling all supported option overrides.
 	OverrideUnsupportedParams bool `yaml:"override-unsupported-params,omitempty" json:"override-unsupported-params,omitempty"`
+	// OverrideResponseFormatURL coerces response_format=url to b64_json when set.
+	OverrideResponseFormatURL *bool `yaml:"override-response-format-url,omitempty" json:"override-response-format-url,omitempty"`
+	// OverrideTransparentBackground coerces background=transparent to auto when set.
+	OverrideTransparentBackground *bool `yaml:"override-transparent-background,omitempty" json:"override-transparent-background,omitempty"`
 }

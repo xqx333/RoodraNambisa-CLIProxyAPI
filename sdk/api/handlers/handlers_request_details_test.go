@@ -137,3 +137,20 @@ func TestGetRequestDetails_ImageModelReturns503(t *testing.T) {
 		t.Fatalf("unexpected error message: %q", msg)
 	}
 }
+
+func TestGetRequestDetails_ConfiguredImageModelReturns503(t *testing.T) {
+	handler := NewBaseAPIHandlers(&sdkconfig.SDKConfig{
+		Images: sdkconfig.ImagesConfig{ImageModel: "gpt-image-custom"},
+	}, coreauth.NewManager(nil, nil, nil))
+
+	_, _, errMsg := handler.getRequestDetails("gpt-image-custom")
+	if errMsg == nil {
+		t.Fatalf("expected error for configured image model, got nil")
+	}
+	if errMsg.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("unexpected status code: got %d want %d", errMsg.StatusCode, http.StatusServiceUnavailable)
+	}
+	if errMsg.Error == nil || !strings.Contains(errMsg.Error.Error(), "gpt-image-custom") {
+		t.Fatalf("unexpected error message: %v", errMsg.Error)
+	}
+}

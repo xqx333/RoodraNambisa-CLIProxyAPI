@@ -254,7 +254,10 @@ func TestOpenAIImagesCanOverrideUnsupportedOptions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	executor := &imageCaptureExecutor{}
 	h := newImagesTestHandler(t, executor)
-	h.Cfg.Images.OverrideUnsupportedParams = true
+	overrideResponseFormatURL := true
+	overrideTransparentBackground := true
+	h.Cfg.Images.OverrideResponseFormatURL = &overrideResponseFormatURL
+	h.Cfg.Images.OverrideTransparentBackground = &overrideTransparentBackground
 	router := gin.New()
 	router.POST("/v1/images/generations", h.Generations)
 
@@ -277,11 +280,57 @@ func TestOpenAIImagesCanOverrideUnsupportedOptions(t *testing.T) {
 	}
 }
 
-func TestOpenAIImagesOverrideKeepsUnknownResponseFormatUnsupported(t *testing.T) {
+func TestOpenAIImagesOverrideOptionsAreSeparate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	overrideResponseFormatURL := true
+	overrideTransparentBackground := false
+	executor := &imageCaptureExecutor{}
+	h := newImagesTestHandler(t, executor)
+	h.Cfg.Images.OverrideResponseFormatURL = &overrideResponseFormatURL
+	h.Cfg.Images.OverrideTransparentBackground = &overrideTransparentBackground
+	router := gin.New()
+	router.POST("/v1/images/generations", h.Generations)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-2","prompt":"draw","response_format":"url","background":"transparent"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body=%s", resp.Code, http.StatusBadRequest, resp.Body.String())
+	}
+	if executor.calls != 0 && executor.streamCalls != 0 {
+		t.Fatalf("executor calls = %d streamCalls = %d, want none", executor.calls, executor.streamCalls)
+	}
+}
+
+func TestOpenAIImagesLegacyOverrideEnablesBothOptions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	executor := &imageCaptureExecutor{}
 	h := newImagesTestHandler(t, executor)
 	h.Cfg.Images.OverrideUnsupportedParams = true
+	router := gin.New()
+	router.POST("/v1/images/generations", h.Generations)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-2","prompt":"draw","response_format":"url","background":"transparent"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	}
+	if executor.calls != 1 {
+		t.Fatalf("executor calls = %d, want 1", executor.calls)
+	}
+}
+
+func TestOpenAIImagesOverrideKeepsUnknownResponseFormatUnsupported(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	executor := &imageCaptureExecutor{}
+	h := newImagesTestHandler(t, executor)
+	overrideResponseFormatURL := true
+	h.Cfg.Images.OverrideResponseFormatURL = &overrideResponseFormatURL
 	router := gin.New()
 	router.POST("/v1/images/generations", h.Generations)
 

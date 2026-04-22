@@ -875,7 +875,7 @@ func (h *BaseAPIHandler) getRequestDetails(modelName string) (providers []string
 	parsed := thinking.ParseSuffix(resolvedModelName)
 	baseModel := strings.TrimSpace(parsed.ModelName)
 
-	if strings.EqualFold(baseModel, "gpt-image-2") {
+	if imageModel := h.imagesConfiguredModel(); imageModel != "" && strings.EqualFold(baseModel, imageModel) {
 		return nil, "", &interfaces.ErrorMessage{
 			StatusCode: http.StatusServiceUnavailable,
 			Error:      fmt.Errorf("model %s is only supported on /v1/images/generations and /v1/images/edits", baseModel),
@@ -899,6 +899,15 @@ func (h *BaseAPIHandler) getRequestDetails(modelName string) (providers []string
 	// The thinking suffix is preserved in the model name itself, so no
 	// metadata-based configuration passing is needed.
 	return providers, resolvedModelName, nil
+}
+
+func (h *BaseAPIHandler) imagesConfiguredModel() string {
+	if h != nil && h.Cfg != nil {
+		if model := strings.TrimSpace(h.Cfg.Images.ImageModel); model != "" {
+			return model
+		}
+	}
+	return "gpt-image-2"
 }
 
 func cloneBytes(src []byte) []byte {
