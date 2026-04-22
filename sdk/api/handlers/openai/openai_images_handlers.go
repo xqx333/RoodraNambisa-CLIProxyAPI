@@ -97,9 +97,16 @@ type imageReference struct {
 }
 
 type imageOutputItem struct {
-	Type          string `json:"type"`
-	Result        string `json:"result"`
-	RevisedPrompt string `json:"revised_prompt,omitempty"`
+	Type          string          `json:"type"`
+	Result        string          `json:"result"`
+	RevisedPrompt string          `json:"revised_prompt,omitempty"`
+	Usage         json.RawMessage `json:"usage,omitempty"`
+	InputTokens   json.RawMessage `json:"input_tokens,omitempty"`
+	OutputTokens  json.RawMessage `json:"output_tokens,omitempty"`
+	TotalTokens   json.RawMessage `json:"total_tokens,omitempty"`
+
+	InputTokensDetails  json.RawMessage `json:"input_tokens_details,omitempty"`
+	OutputTokensDetails json.RawMessage `json:"output_tokens_details,omitempty"`
 }
 
 type imageResult struct {
@@ -114,9 +121,10 @@ type imagesResponse struct {
 }
 
 type responsesImageObject struct {
-	CreatedAt int64             `json:"created_at"`
-	Output    []imageOutputItem `json:"output"`
-	Usage     json.RawMessage   `json:"usage,omitempty"`
+	CreatedAt int64                      `json:"created_at"`
+	Output    []imageOutputItem          `json:"output"`
+	Usage     json.RawMessage            `json:"usage,omitempty"`
+	ToolUsage map[string]json.RawMessage `json:"tool_usage,omitempty"`
 }
 
 type responseCompletedEvent struct {
@@ -235,7 +243,7 @@ func (h *OpenAIImagesAPIHandler) handleNonStreamingImagesResponse(c *gin.Context
 			upstreamHeaders = headers
 		}
 		combined.Data = append(combined.Data, parsed.Data...)
-		combined.Usage = mergeImageUsage(combined.Usage, parsed.Usage)
+		combined.Usage = mergeImageUsageForNAggregation(combined.Usage, parsed.Usage)
 		cliCancel(resp)
 	}
 	imagesPayload, err := json.Marshal(combined)
@@ -325,7 +333,7 @@ func (h *OpenAIImagesAPIHandler) handleMultiStreamingImagesResponse(c *gin.Conte
 		if i == 0 {
 			handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
 		}
-		mapper := &imageStreamMapper{operation: op}
+		mapper := &imageStreamMapper{operation: op, omitInputUsage: i > 0}
 		var streamErr error
 		h.ForwardStream(c, flusher, func(err error) {
 			streamErr = err
@@ -628,8 +636,12 @@ func parseResponsesToImagesResponse(raw []byte, fallbackCreated int64) (imagesRe
 	if len(out.Data) == 0 {
 		return imagesResponse{}, errors.New("Codex response did not include an image_generation_call result")
 	}
-	if len(bytes.TrimSpace(respObj.Usage)) > 0 && string(bytes.TrimSpace(respObj.Usage)) != "null" {
-		out.Usage = respObj.Usage
+	if usage := imageUsageFromToolUsage(respObj.ToolUsage); len(bytes.TrimSpace(usage)) > 0 && string(bytes.TrimSpace(usage)) != "null" {
+		out.Usage = usage
+	} else if usage := imageUsageFromOutput(respObj.Output); len(bytes.TrimSpace(usage)) > 0 && string(bytes.TrimSpace(usage)) != "null" {
+		out.Usage = usage
+	} else if usage := respObj.Usage; len(bytes.TrimSpace(usage)) > 0 && string(bytes.TrimSpace(usage)) != "null" {
+		out.Usage = usage
 	}
 	return out, nil
 }
@@ -639,7 +651,7 @@ func parseResponsesImageObject(raw []byte) (responsesImageObject, error) {
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return obj, fmt.Errorf("invalid Codex response: %w", err)
 	}
-	if len(obj.Output) > 0 || obj.CreatedAt != 0 || len(obj.Usage) > 0 {
+	if len(obj.Output) > 0 || obj.CreatedAt != 0 || len(obj.Usage) > 0 || len(obj.ToolUsage) > 0 {
 		return obj, nil
 	}
 	var completed responseCompletedEvent
@@ -663,6 +675,53 @@ func imageResultsFromOutput(items []imageOutputItem) []imageResult {
 	return results
 }
 
+func imageUsageFromToolUsage(toolUsage map[string]json.RawMessage) json.RawMessage {
+	for _, key := range []string{"image_gen", "image_generation"} {
+		if usage := toolUsage[key]; len(bytes.TrimSpace(usage)) > 0 && string(bytes.TrimSpace(usage)) != "null" {
+			return usage
+		}
+	}
+	return nil
+}
+
+func imageUsageFromOutput(items []imageOutputItem) json.RawMessage {
+	var combined json.RawMessage
+	for i := range items {
+		if items[i].Type != "image_generation_call" {
+			continue
+		}
+		combined = mergeImageUsage(combined, imageUsageRawFromOutputItem(items[i]))
+	}
+	return combined
+}
+
+func imageUsageRawFromOutputItem(item imageOutputItem) json.RawMessage {
+	if len(bytes.TrimSpace(item.Usage)) > 0 && string(bytes.TrimSpace(item.Usage)) != "null" {
+		return item.Usage
+	}
+	fields := map[string]json.RawMessage{}
+	setRawUsageField(fields, "input_tokens", item.InputTokens)
+	setRawUsageField(fields, "output_tokens", item.OutputTokens)
+	setRawUsageField(fields, "total_tokens", item.TotalTokens)
+	setRawUsageField(fields, "input_tokens_details", item.InputTokensDetails)
+	setRawUsageField(fields, "output_tokens_details", item.OutputTokensDetails)
+	if len(fields) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(fields)
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+func setRawUsageField(dst map[string]json.RawMessage, key string, value json.RawMessage) {
+	if len(bytes.TrimSpace(value)) == 0 || string(bytes.TrimSpace(value)) == "null" {
+		return
+	}
+	dst[key] = value
+}
+
 func mergeImageUsage(current, next json.RawMessage) json.RawMessage {
 	if len(bytes.TrimSpace(next)) == 0 || string(bytes.TrimSpace(next)) == "null" {
 		return current
@@ -684,6 +743,107 @@ func mergeImageUsage(current, next json.RawMessage) json.RawMessage {
 		return current
 	}
 	return data
+}
+
+func mergeImageUsageForNAggregation(current, next json.RawMessage) json.RawMessage {
+	if len(bytes.TrimSpace(next)) == 0 || string(bytes.TrimSpace(next)) == "null" {
+		return current
+	}
+	if len(bytes.TrimSpace(current)) == 0 || string(bytes.TrimSpace(current)) == "null" {
+		return next
+	}
+	var currentMap map[string]any
+	var nextMap map[string]any
+	if err := json.Unmarshal(current, &currentMap); err != nil {
+		return next
+	}
+	if err := json.Unmarshal(next, &nextMap); err != nil {
+		return current
+	}
+	merged := mergeImageUsageMapsForNAggregation(currentMap, nextMap)
+	recomputeImageUsageTotal(merged)
+	data, err := json.Marshal(merged)
+	if err != nil {
+		return current
+	}
+	return data
+}
+
+func mergeImageUsageMapsForNAggregation(current, next map[string]any) map[string]any {
+	out := make(map[string]any, len(current)+len(next))
+	for key, value := range current {
+		out[key] = value
+	}
+	for key, value := range next {
+		switch key {
+		case "output_tokens", "output_tokens_details":
+			if existing, ok := out[key]; ok {
+				out[key] = mergeImageUsageValue(existing, value)
+			} else {
+				out[key] = value
+			}
+		case "input_tokens", "input_tokens_details":
+			if _, ok := out[key]; !ok {
+				out[key] = value
+			}
+		case "total_tokens":
+			if _, ok := out[key]; !ok {
+				out[key] = value
+			}
+		default:
+			if existing, ok := out[key]; ok {
+				out[key] = mergeImageUsageValue(existing, value)
+			} else {
+				out[key] = value
+			}
+		}
+	}
+	return out
+}
+
+func recomputeImageUsageTotal(usage map[string]any) {
+	input, inputOK := usageNumber(usage["input_tokens"])
+	output, outputOK := usageNumber(usage["output_tokens"])
+	if !inputOK || !outputOK {
+		return
+	}
+	usage["total_tokens"] = input + output
+}
+
+func omitInputImageUsage(raw json.RawMessage) json.RawMessage {
+	if len(bytes.TrimSpace(raw)) == 0 || string(bytes.TrimSpace(raw)) == "null" {
+		return raw
+	}
+	var usage map[string]any
+	if err := json.Unmarshal(raw, &usage); err != nil {
+		return raw
+	}
+	delete(usage, "input_tokens")
+	delete(usage, "input_tokens_details")
+	if output, ok := usageNumber(usage["output_tokens"]); ok {
+		usage["total_tokens"] = output
+	}
+	data, err := json.Marshal(usage)
+	if err != nil {
+		return raw
+	}
+	return data
+}
+
+func usageNumber(value any) (float64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return v, true
+	case int:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case json.Number:
+		f, err := v.Float64()
+		return f, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func mergeImageUsageMaps(current, next map[string]any) map[string]any {
@@ -716,11 +876,12 @@ func mergeImageUsageValue(current, next any) any {
 }
 
 type imageStreamMapper struct {
-	operation  imageOperation
-	parser     imageSSEParser
-	finals     []imageResult
-	finalUsage json.RawMessage
-	completed  bool
+	operation      imageOperation
+	parser         imageSSEParser
+	finals         []imageResult
+	finalUsage     json.RawMessage
+	omitInputUsage bool
+	completed      bool
 }
 
 func (m *imageStreamMapper) writeChunk(w io.Writer, chunk []byte) {
@@ -761,18 +922,26 @@ func (m *imageStreamMapper) writePayload(w io.Writer, payload []byte) {
 			return
 		}
 		m.finals = append(m.finals, results...)
+		m.finalUsage = mergeImageUsage(m.finalUsage, imageUsageRawFromOutputItem(event.Item))
 	case "response.completed":
 		var event responseCompletedEvent
 		if err := json.Unmarshal(payload, &event); err != nil {
 			return
 		}
 		results := imageResultsFromOutput(event.Response.Output)
+		usage := imageUsageFromToolUsage(event.Response.ToolUsage)
+		if len(bytes.TrimSpace(usage)) == 0 || string(bytes.TrimSpace(usage)) == "null" {
+			usage = imageUsageFromOutput(event.Response.Output)
+		}
+		if len(bytes.TrimSpace(usage)) == 0 || string(bytes.TrimSpace(usage)) == "null" {
+			usage = event.Response.Usage
+		}
 		if len(results) > 0 {
-			m.writeCompletedSet(w, results, event.Response.Usage)
+			m.writeCompletedSet(w, results, usage)
 			return
 		}
 		if len(m.finals) > 0 {
-			m.writeCompletedSet(w, m.finals, event.Response.Usage)
+			m.writeCompletedSet(w, m.finals, mergeImageUsage(m.finalUsage, usage))
 		}
 	}
 }
@@ -791,6 +960,9 @@ func (m *imageStreamMapper) writeCompleted(w io.Writer, result imageResult, usag
 		RevisedPrompt: result.RevisedPrompt,
 	}
 	if len(bytes.TrimSpace(usage)) > 0 && string(bytes.TrimSpace(usage)) != "null" {
+		if m.omitInputUsage {
+			usage = omitInputImageUsage(usage)
+		}
 		event.Usage = usage
 	}
 	m.writeSSE(w, m.operation.completedEvent, event)

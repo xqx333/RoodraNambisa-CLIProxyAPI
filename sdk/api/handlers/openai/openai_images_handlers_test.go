@@ -172,7 +172,7 @@ func TestOpenAIImagesGenerationsUsesConfiguredImageModel(t *testing.T) {
 func TestOpenAIImagesGenerationsAggregatesMultipleNonStreamingImages(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	executor := &imageCaptureExecutor{
-		response: []byte(`{"created_at":1700000000,"output":[{"type":"image_generation_call","result":"aGVsbG8=","revised_prompt":"rev"}],"usage":{"input_tokens":1,"output_tokens":2,"output_tokens_details":{"image_tokens":2},"total_tokens":3}}`),
+		response: []byte(`{"created_at":1700000000,"output":[{"type":"image_generation_call","result":"aGVsbG8=","revised_prompt":"rev"}],"tool_usage":{"image_gen":{"input_tokens":1,"input_tokens_details":{"text_tokens":1,"image_tokens":0},"output_tokens":2,"output_tokens_details":{"image_tokens":2,"text_tokens":0},"total_tokens":3}},"usage":{"input_tokens":99,"output_tokens":99,"total_tokens":198}}`),
 	}
 	h := newImagesTestHandler(t, executor)
 	enableNAggregation := true
@@ -197,11 +197,17 @@ func TestOpenAIImagesGenerationsAggregatesMultipleNonStreamingImages(t *testing.
 	if count := len(gjson.Get(resp.Body.String(), "data").Array()); count != 2 {
 		t.Fatalf("data count = %d, want 2: %s", count, resp.Body.String())
 	}
-	if got := gjson.Get(resp.Body.String(), "usage.total_tokens").Int(); got != 6 {
-		t.Fatalf("usage.total_tokens = %d, want 6", got)
+	if got := gjson.Get(resp.Body.String(), "usage.input_tokens").Int(); got != 1 {
+		t.Fatalf("usage.input_tokens = %d, want 1", got)
+	}
+	if got := gjson.Get(resp.Body.String(), "usage.total_tokens").Int(); got != 5 {
+		t.Fatalf("usage.total_tokens = %d, want 5", got)
 	}
 	if got := gjson.Get(resp.Body.String(), "usage.output_tokens").Int(); got != 4 {
 		t.Fatalf("usage.output_tokens = %d, want 4", got)
+	}
+	if got := gjson.Get(resp.Body.String(), "usage.input_tokens_details.text_tokens").Int(); got != 1 {
+		t.Fatalf("usage.input_tokens_details.text_tokens = %d, want 1", got)
 	}
 	if got := gjson.Get(resp.Body.String(), "usage.output_tokens_details.image_tokens").Int(); got != 4 {
 		t.Fatalf("usage.output_tokens_details.image_tokens = %d, want 4", got)
@@ -398,7 +404,7 @@ func TestOpenAIImagesEditsMultipartBuildsDataURLsAndMask(t *testing.T) {
 }
 
 func TestConvertResponsesToImagesResponse(t *testing.T) {
-	raw := []byte(`{"created_at":1700000000,"output":[{"type":"message"},{"type":"image_generation_call","result":"ZmluYWw=","revised_prompt":"better"}],"usage":{"total_tokens":9}}`)
+	raw := []byte(`{"created_at":1700000000,"output":[{"type":"message"},{"type":"image_generation_call","result":"ZmluYWw=","revised_prompt":"better"}],"tool_usage":{"image_gen":{"input_tokens":3,"input_tokens_details":{"text_tokens":3,"image_tokens":0},"output_tokens":6,"output_tokens_details":{"image_tokens":6,"text_tokens":0},"total_tokens":9}},"usage":{"total_tokens":999}}`)
 	out, err := convertResponsesToImagesResponse(raw, 1)
 	if err != nil {
 		t.Fatalf("convertResponsesToImagesResponse: %v", err)
@@ -414,6 +420,18 @@ func TestConvertResponsesToImagesResponse(t *testing.T) {
 	}
 	if got := gjson.GetBytes(out, "usage.total_tokens").Int(); got != 9 {
 		t.Fatalf("usage.total_tokens = %d", got)
+	}
+	if got := gjson.GetBytes(out, "usage.input_tokens").Int(); got != 3 {
+		t.Fatalf("usage.input_tokens = %d", got)
+	}
+	if got := gjson.GetBytes(out, "usage.output_tokens").Int(); got != 6 {
+		t.Fatalf("usage.output_tokens = %d", got)
+	}
+	if got := gjson.GetBytes(out, "usage.input_tokens_details.text_tokens").Int(); got != 3 {
+		t.Fatalf("usage.input_tokens_details.text_tokens = %d", got)
+	}
+	if got := gjson.GetBytes(out, "usage.output_tokens_details.image_tokens").Int(); got != 6 {
+		t.Fatalf("usage.output_tokens_details.image_tokens = %d", got)
 	}
 }
 
@@ -453,7 +471,8 @@ func TestOpenAIImagesStreamingSupportsMultipleCompletedImages(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	executor := &imageCaptureExecutor{
 		streamChunks: []coreexecutor.StreamChunk{
-			{Payload: []byte(`data: {"type":"response.completed","response":{"created_at":1700000000,"output":[{"type":"image_generation_call","result":"Zmlyc3Q="}],"usage":{"total_tokens":11}}}`)},
+			{Payload: []byte(`data: {"type":"response.output_item.done","item":{"type":"image_generation_call","result":"Zmlyc3Q="}}`)},
+			{Payload: []byte(`data: {"type":"response.completed","response":{"created_at":1700000000,"output":[],"tool_usage":{"image_gen":{"input_tokens":1,"input_tokens_details":{"text_tokens":1,"image_tokens":0},"output_tokens":2,"output_tokens_details":{"image_tokens":2,"text_tokens":0},"total_tokens":3}},"usage":{"input_tokens":99,"output_tokens":99,"total_tokens":198}}}`)},
 		},
 	}
 	h := newImagesTestHandler(t, executor)
@@ -482,5 +501,11 @@ func TestOpenAIImagesStreamingSupportsMultipleCompletedImages(t *testing.T) {
 	}
 	if strings.Count(body, `"b64_json":"Zmlyc3Q="`) != 2 {
 		t.Fatalf("completed image payloads missing: %s", body)
+	}
+	if strings.Count(body, `"input_tokens":1`) != 1 {
+		t.Fatalf("input tokens should appear once across aggregated stream: %s", body)
+	}
+	if strings.Count(body, `"output_tokens":2`) != 2 {
+		t.Fatalf("output tokens should appear on each completed image: %s", body)
 	}
 }
