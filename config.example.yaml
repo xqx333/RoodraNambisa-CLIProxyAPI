@@ -135,6 +135,12 @@ enable-gemini-cli-endpoint: false
 
 # When > 0, emit blank lines every N seconds for non-streaming responses to prevent idle timeouts.
 nonstream-keepalive-interval: 0
+# OpenAI Images API compatibility backed by Codex Responses image_generation tool.
+# images:
+#   codex-model: "gpt-5.4"          # Outer Responses model used to invoke the image tool.
+#   image-model: "gpt-image-2"      # image_generation tool model exposed by /v1/images/*.
+#   enable-n-aggregation: true      # Split n > 1 into multiple Codex image calls and aggregate results.
+#   unsupported-status-code: 400    # Status code for unsupported image options such as response_format=url.
 # Streaming behavior (SSE keep-alives + safe bootstrap retries).
 # streaming:
 #   keepalive-seconds: 15   # Default: 0 (disabled). <= 0 disables keep-alives.

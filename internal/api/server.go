@@ -347,6 +347,7 @@ func (s *Server) setupRoutes() {
 	geminiCLIHandlers := gemini.NewGeminiCLIAPIHandler(s.handlers)
 	claudeCodeHandlers := claude.NewClaudeCodeAPIHandler(s.handlers)
 	openaiResponsesHandlers := openai.NewOpenAIResponsesAPIHandler(s.handlers)
+	openaiImagesHandlers := openai.NewOpenAIImagesAPIHandler(s.handlers)
 
 	// OpenAI compatible API routes
 	v1 := s.engine.Group("/v1")
@@ -360,6 +361,8 @@ func (s *Server) setupRoutes() {
 		v1.GET("/responses", openaiResponsesHandlers.ResponsesWebsocket)
 		v1.POST("/responses", openaiResponsesHandlers.Responses)
 		v1.POST("/responses/compact", openaiResponsesHandlers.Compact)
+		v1.POST("/images/generations", openaiImagesHandlers.Generations)
+		v1.POST("/images/edits", openaiImagesHandlers.Edits)
 	}
 
 	// Gemini compatible API routes

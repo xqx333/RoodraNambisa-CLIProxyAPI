@@ -34,6 +34,9 @@ type SDKConfig struct {
 	// NonStreamKeepAliveInterval controls how often blank lines are emitted for non-streaming responses.
 	// <= 0 disables keep-alives. Value is in seconds.
 	NonStreamKeepAliveInterval int `yaml:"nonstream-keepalive-interval,omitempty" json:"nonstream-keepalive-interval,omitempty"`
+
+	// Images configures OpenAI Images compatibility backed by Codex Responses.
+	Images ImagesConfig `yaml:"images,omitempty" json:"images,omitempty"`
 }
 
 // StreamingConfig holds server streaming behavior configuration.
@@ -46,4 +49,16 @@ type StreamingConfig struct {
 	// to allow auth rotation / transient recovery.
 	// <= 0 disables bootstrap retries. Default is 0.
 	BootstrapRetries int `yaml:"bootstrap-retries,omitempty" json:"bootstrap-retries,omitempty"`
+}
+
+// ImagesConfig holds OpenAI Images compatibility configuration.
+type ImagesConfig struct {
+	// CodexModel is the outer Responses model used to invoke the Codex image_generation tool.
+	CodexModel string `yaml:"codex-model,omitempty" json:"codex-model,omitempty"`
+	// ImageModel is the image_generation tool model exposed through the OpenAI Images API.
+	ImageModel string `yaml:"image-model,omitempty" json:"image-model,omitempty"`
+	// EnableNAggregation enables multi-call aggregation for Images API n > 1 requests.
+	EnableNAggregation *bool `yaml:"enable-n-aggregation,omitempty" json:"enable-n-aggregation,omitempty"`
+	// UnsupportedStatusCode is used for unsupported Images API options.
+	UnsupportedStatusCode int `yaml:"unsupported-status-code,omitempty" json:"unsupported-status-code,omitempty"`
 }

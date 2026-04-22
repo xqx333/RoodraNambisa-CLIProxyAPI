@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"syscall"
@@ -636,6 +637,11 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	cfg.Pprof.Addr = DefaultPprofAddr
 	cfg.AmpCode.RestrictManagementToLocalhost = false // Default to false: API key auth is sufficient
 	cfg.RemoteManagement.PanelGitHubRepository = DefaultPanelGitHubRepository
+	cfg.Images.CodexModel = "gpt-5.4"
+	cfg.Images.ImageModel = "gpt-image-2"
+	defaultImagesNAggregation := true
+	cfg.Images.EnableNAggregation = &defaultImagesNAggregation
+	cfg.Images.UnsupportedStatusCode = http.StatusBadRequest
 	if err = yaml.Unmarshal(data, &cfg); err != nil {
 		if optional {
 			// In cloud deploy mode, if YAML parsing fails, return empty config instead of error.
@@ -677,6 +683,22 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	cfg.RemoteManagement.PanelGitHubRepository = strings.TrimSpace(cfg.RemoteManagement.PanelGitHubRepository)
 	if cfg.RemoteManagement.PanelGitHubRepository == "" {
 		cfg.RemoteManagement.PanelGitHubRepository = DefaultPanelGitHubRepository
+	}
+
+	cfg.Images.CodexModel = strings.TrimSpace(cfg.Images.CodexModel)
+	if cfg.Images.CodexModel == "" {
+		cfg.Images.CodexModel = "gpt-5.4"
+	}
+	cfg.Images.ImageModel = strings.TrimSpace(cfg.Images.ImageModel)
+	if cfg.Images.ImageModel == "" {
+		cfg.Images.ImageModel = "gpt-image-2"
+	}
+	if cfg.Images.EnableNAggregation == nil {
+		enableNAggregation := true
+		cfg.Images.EnableNAggregation = &enableNAggregation
+	}
+	if cfg.Images.UnsupportedStatusCode < http.StatusBadRequest || cfg.Images.UnsupportedStatusCode > 599 {
+		cfg.Images.UnsupportedStatusCode = http.StatusBadRequest
 	}
 
 	cfg.Pprof.Addr = strings.TrimSpace(cfg.Pprof.Addr)

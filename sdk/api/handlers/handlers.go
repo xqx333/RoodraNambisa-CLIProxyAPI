@@ -513,6 +513,62 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 	return resp.Payload, FilterUpstreamHeaders(resp.Headers), nil
 }
 
+// ExecuteWithProviders executes a non-streaming request against an explicit provider set.
+// It bypasses model-registry provider lookup while preserving request metadata and error formatting.
+func (h *BaseAPIHandler) ExecuteWithProviders(ctx context.Context, providers []string, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, http.Header, *interfaces.ErrorMessage) {
+	normalizedModel := strings.TrimSpace(modelName)
+	if normalizedModel == "" {
+		return nil, nil, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("model is required")}
+	}
+	if len(providers) == 0 {
+		return nil, nil, &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: fmt.Errorf("no provider configured for model %s", normalizedModel)}
+	}
+	reqMeta := requestExecutionMetadata(ctx)
+	reqMeta[coreexecutor.RequestedModelMetadataKey] = normalizedModel
+	payload := rawJSON
+	if len(payload) == 0 {
+		payload = nil
+	}
+	req := coreexecutor.Request{
+		Model:   normalizedModel,
+		Payload: payload,
+	}
+	opts := coreexecutor.Options{
+		Stream:          false,
+		Alt:             alt,
+		OriginalRequest: rawJSON,
+		SourceFormat:    sdktranslator.FromString(handlerType),
+	}
+	opts.Metadata = reqMeta
+	resp, err := h.AuthManager.Execute(ctx, providers, req, opts)
+	if err != nil {
+		return nil, nil, executionErrorMessage(err, providers, normalizedModel)
+	}
+	if !PassthroughHeadersEnabled(h.Cfg) {
+		return resp.Payload, nil, nil
+	}
+	return resp.Payload, FilterUpstreamHeaders(resp.Headers), nil
+}
+
+// ExecuteStreamWithProviders executes a streaming request against an explicit provider set.
+// It bypasses model-registry provider lookup while preserving request metadata and error formatting.
+func (h *BaseAPIHandler) ExecuteStreamWithProviders(ctx context.Context, providers []string, handlerType, modelName string, rawJSON []byte, alt string) (<-chan []byte, http.Header, <-chan *interfaces.ErrorMessage) {
+	normalizedModel := strings.TrimSpace(modelName)
+	if normalizedModel == "" {
+		errChan := make(chan *interfaces.ErrorMessage, 1)
+		errChan <- &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("model is required")}
+		close(errChan)
+		return nil, nil, errChan
+	}
+	if len(providers) == 0 {
+		errChan := make(chan *interfaces.ErrorMessage, 1)
+		errChan <- &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: fmt.Errorf("no provider configured for model %s", normalizedModel)}
+		close(errChan)
+		return nil, nil, errChan
+	}
+	return h.executeStreamWithResolvedProviders(ctx, providers, handlerType, normalizedModel, rawJSON, alt)
+}
+
 // ExecuteCountWithAuthManager executes a non-streaming request via the core auth manager.
 // This path is the only supported execution route.
 func (h *BaseAPIHandler) ExecuteCountWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, http.Header, *interfaces.ErrorMessage) {
@@ -571,6 +627,10 @@ func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handl
 		close(errChan)
 		return nil, nil, errChan
 	}
+	return h.executeStreamWithResolvedProviders(ctx, providers, handlerType, normalizedModel, rawJSON, alt)
+}
+
+func (h *BaseAPIHandler) executeStreamWithResolvedProviders(ctx context.Context, providers []string, handlerType, normalizedModel string, rawJSON []byte, alt string) (<-chan []byte, http.Header, <-chan *interfaces.ErrorMessage) {
 	if h != nil && h.AuthManager != nil {
 		ctx = h.AuthManager.WithRequestRetryBudgetForProviders(ctx, providers, StreamingBootstrapRetries(h.Cfg))
 	}
@@ -779,6 +839,23 @@ func statusFromError(err error) int {
 		}
 	}
 	return 0
+}
+
+func executionErrorMessage(err error, providers []string, model string) *interfaces.ErrorMessage {
+	err = enrichAuthSelectionError(err, providers, model)
+	status := http.StatusInternalServerError
+	if se, ok := err.(interface{ StatusCode() int }); ok && se != nil {
+		if code := se.StatusCode(); code > 0 {
+			status = code
+		}
+	}
+	var addon http.Header
+	if he, ok := err.(interface{ Headers() http.Header }); ok && he != nil {
+		if hdr := he.Headers(); hdr != nil {
+			addon = hdr.Clone()
+		}
+	}
+	return &interfaces.ErrorMessage{StatusCode: status, Error: err, Addon: addon}
 }
 
 func (h *BaseAPIHandler) getRequestDetails(modelName string) (providers []string, normalizedModel string, err *interfaces.ErrorMessage) {

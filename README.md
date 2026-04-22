@@ -37,6 +37,10 @@
 - 补了使用统计里的 `client_ip` 统一口径：
   - HTTP 日志和 usage 统计共用同一套解析规则
   - 快照合并去重把 `client_ip` 也纳入判断
+- 增加了 Codex-backed OpenAI Images 兼容层：
+  - 支持 `POST /v1/images/generations`
+  - 支持 `POST /v1/images/edits`
+  - 官方 Images 请求会转换为 Codex Responses 的 `image_generation` tool 调用
 
 如果你是从上游主线迁移到这个分支，优先关注这些配置项：
 
@@ -55,10 +59,56 @@
 - 支持流式与非流式响应
 - 支持函数调用 / 工具调用
 - 支持多模态输入（文本、图片）
+- 支持通过 Codex 账号代理 OpenAI Images 生成 / 编辑接口
 - 支持 Gemini / AI Studio / Claude Code / OpenAI Codex 多账户负载均衡
 - 支持 Generative Language API Key
 - 支持 OpenAI 兼容上游提供商接入
 - 提供可复用的 Go SDK
+
+## OpenAI Images 兼容接口
+
+本分支提供 Codex-backed OpenAI Images 兼容层。客户端按官方 OpenAI Images API 请求配置的图片模型时，服务端会自动转换为 Codex Responses 请求：外层模型默认使用 `gpt-5.4`，并通过 `image_generation` tool 调用图片模型。默认图片模型是 `gpt-image-2`。
+
+支持的接口：
+
+- `POST /v1/images/generations`
+- `POST /v1/images/edits`
+
+配置项：
+
+```yaml
+images:
+  codex-model: "gpt-5.4"
+  image-model: "gpt-image-2"
+  enable-n-aggregation: true
+  unsupported-status-code: 400
+```
+
+说明：
+
+- `model` 默认支持 `gpt-image-2`；如需换成其他 Codex 支持的图片 tool 模型，修改 `images.image-model`，请求里的 `model` 也要使用同一个值。
+- `response_format=url` 不支持，接口固定返回 `b64_json`；如果请求传入 `url`，会直接返回错误。
+- `background=transparent` 不支持，会直接返回错误。
+- `edits` 支持 multipart 的 `image` / `image[]` / `mask`，也支持 JSON 的 `images[].image_url`。
+- 暂不支持 JSON `file_id`，因为当前项目没有 OpenAI Files API 兼容层。
+- `unsupported-status-code` 控制不支持参数的错误状态码，默认 `400`。
+- `enable-n-aggregation` 默认开启。开启时，`n > 1` 会拆成多次 Codex 图片调用再聚合，非流式返回多个 `data[]` 并累加 `usage.output_tokens` 等用量字段；流式依次输出多个 `image_generation.completed` 或 `image_edit.completed` 事件。关闭时，`n > 1` 直接按不支持参数返回错误。
+
+示例：
+
+```bash
+curl http://127.0.0.1:8317/v1/images/generations \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-image-2",
+    "prompt": "一只橘猫坐在赛博朋克风格的窗台上",
+    "size": "1024x1024",
+    "quality": "high",
+    "n": 1,
+    "response_format": "b64_json"
+  }'
+```
 
 ## 新手入门
 
