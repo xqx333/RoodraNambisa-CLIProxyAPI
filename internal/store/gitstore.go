@@ -19,6 +19,7 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/transport"
 	"github.com/go-git/go-git/v6/plumbing/transport/http"
 	internalauth "github.com/router-for-me/CLIProxyAPI/v6/internal/auth"
+	internalcodex "github.com/router-for-me/CLIProxyAPI/v6/internal/auth/codex"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
 
@@ -501,6 +502,11 @@ func (s *GitTokenStore) readAuthFile(path, baseDir string) (*cliproxyauth.Auth, 
 		UpdatedAt:        info.ModTime(),
 		LastRefreshedAt:  time.Time{},
 		NextRefreshAfter: time.Time{},
+	}
+	if strings.EqualFold(strings.TrimSpace(provider), "codex") {
+		if planType := internalcodex.EffectivePlanType(metadata); planType != "" {
+			auth.Attributes["plan_type"] = planType
+		}
 	}
 	if errHash := cliproxyauth.SetCanonicalSourceHashAttribute(auth); errHash != nil {
 		return nil, fmt.Errorf("canonicalize auth metadata: %w", errHash)

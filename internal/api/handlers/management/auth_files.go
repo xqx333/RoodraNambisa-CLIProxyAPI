@@ -336,6 +336,14 @@ func (h *Handler) listAuthFilesFromDisk(c *gin.Context) {
 				emailValue := gjson.GetBytes(data, "email").String()
 				fileData["type"] = typeValue
 				fileData["email"] = emailValue
+				if strings.EqualFold(strings.TrimSpace(typeValue), "codex") {
+					var metadata map[string]any
+					if errUnmarshal := json.Unmarshal(data, &metadata); errUnmarshal == nil {
+						if planType := codex.EffectivePlanType(metadata); planType != "" {
+							fileData["plan_type"] = planType
+						}
+					}
+				}
 				if pv := gjson.GetBytes(data, "priority"); pv.Exists() {
 					switch pv.Type {
 					case gjson.Number:
@@ -393,6 +401,9 @@ func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
 	}
 	if email := authEmail(auth); email != "" {
 		entry["email"] = email
+	}
+	if planType := effectiveCodexPlanType(auth); planType != "" {
+		entry["plan_type"] = planType
 	}
 	if accountType, account := auth.AccountInfo(); accountType != "" || account != "" {
 		if accountType != "" {
@@ -475,16 +486,8 @@ func extractCodexIDTokenClaims(auth *coreauth.Auth) gin.H {
 	if !strings.EqualFold(strings.TrimSpace(auth.Provider), "codex") {
 		return nil
 	}
-	idTokenRaw, ok := auth.Metadata["id_token"].(string)
-	if !ok {
-		return nil
-	}
-	idToken := strings.TrimSpace(idTokenRaw)
-	if idToken == "" {
-		return nil
-	}
-	claims, err := codex.ParseJWTToken(idToken)
-	if err != nil || claims == nil {
+	claims := codex.IDTokenClaimsFromMetadata(auth.Metadata)
+	if claims == nil {
 		return nil
 	}
 
@@ -506,6 +509,21 @@ func extractCodexIDTokenClaims(auth *coreauth.Auth) gin.H {
 		return nil
 	}
 	return result
+}
+
+func effectiveCodexPlanType(auth *coreauth.Auth) string {
+	if auth == nil {
+		return ""
+	}
+	if !strings.EqualFold(strings.TrimSpace(auth.Provider), "codex") {
+		return ""
+	}
+	if auth.Attributes != nil {
+		if planType := strings.TrimSpace(auth.Attributes["plan_type"]); planType != "" {
+			return planType
+		}
+	}
+	return codex.EffectivePlanType(auth.Metadata)
 }
 
 func authEmail(auth *coreauth.Auth) string {
@@ -1142,6 +1160,11 @@ func (h *Handler) buildAuthFromFileData(path string, data []byte) (*coreauth.Aut
 	attr := map[string]string{
 		"path":   path,
 		"source": path,
+	}
+	if strings.EqualFold(strings.TrimSpace(provider), "codex") {
+		if planType := codex.EffectivePlanType(metadata); planType != "" {
+			attr["plan_type"] = planType
+		}
 	}
 	disabled, _ := metadata["disabled"].(bool)
 	status := coreauth.StatusActive

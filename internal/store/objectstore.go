@@ -18,6 +18,7 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	internalauth "github.com/router-for-me/CLIProxyAPI/v6/internal/auth"
+	internalcodex "github.com/router-for-me/CLIProxyAPI/v6/internal/auth/codex"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/misc"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
@@ -613,6 +614,11 @@ func (s *ObjectTokenStore) readAuthFile(path, baseDir string) (*cliproxyauth.Aut
 		UpdatedAt:        info.ModTime(),
 		LastRefreshedAt:  time.Time{},
 		NextRefreshAfter: time.Time{},
+	}
+	if strings.EqualFold(strings.TrimSpace(provider), "codex") {
+		if planType := internalcodex.EffectivePlanType(metadata); planType != "" {
+			auth.Attributes["plan_type"] = planType
+		}
 	}
 	if errHash := cliproxyauth.SetCanonicalSourceHashAttribute(auth); errHash != nil {
 		return nil, fmt.Errorf("canonicalize auth metadata: %w", errHash)

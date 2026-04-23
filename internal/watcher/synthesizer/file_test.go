@@ -1,6 +1,7 @@
 package synthesizer
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -232,6 +233,40 @@ func TestFileSynthesizer_Synthesize_GeminiProviderMapping(t *testing.T) {
 	}
 }
 
+func TestFileSynthesizer_Synthesize_CodexPrefersMetadataPlanType(t *testing.T) {
+	tempDir := t.TempDir()
+
+	authData := map[string]any{
+		"type":      "codex",
+		"email":     "codex@example.com",
+		"plan_type": "team",
+		"id_token":  testCodexJWT("acct-1", "pro"),
+	}
+	data, _ := json.Marshal(authData)
+	if err := os.WriteFile(filepath.Join(tempDir, "codex-auth.json"), data, 0o644); err != nil {
+		t.Fatalf("failed to write auth file: %v", err)
+	}
+
+	synth := NewFileSynthesizer()
+	ctx := &SynthesisContext{
+		Config:      &config.Config{},
+		AuthDir:     tempDir,
+		Now:         time.Now(),
+		IDGenerator: NewStableIDGenerator(),
+	}
+
+	auths, err := synth.Synthesize(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(auths) != 1 {
+		t.Fatalf("expected 1 auth, got %d", len(auths))
+	}
+	if got := auths[0].Attributes["plan_type"]; got != "team" {
+		t.Fatalf("plan_type = %q, want %q", got, "team")
+	}
+}
+
 func TestFileSynthesizer_Synthesize_SkipsInvalidFiles(t *testing.T) {
 	tempDir := t.TempDir()
 
@@ -263,6 +298,17 @@ func TestFileSynthesizer_Synthesize_SkipsInvalidFiles(t *testing.T) {
 	if auths[0].Label != "valid@example.com" {
 		t.Errorf("expected label valid@example.com, got %s", auths[0].Label)
 	}
+}
+
+func testCodexJWT(accountID string, planType string) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+	payload, _ := json.Marshal(map[string]any{
+		"https://api.openai.com/auth": map[string]any{
+			"chatgpt_account_id": accountID,
+			"chatgpt_plan_type":  planType,
+		},
+	})
+	return header + "." + base64.RawURLEncoding.EncodeToString(payload) + ".sig"
 }
 
 func TestFileSynthesizer_Synthesize_SkipsDirectories(t *testing.T) {

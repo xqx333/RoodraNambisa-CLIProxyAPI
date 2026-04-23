@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -112,6 +113,27 @@ func TestFileTokenStoreReadAuthFileSetsCanonicalSourceHash(t *testing.T) {
 	}
 	if rawHash := cliproxyauth.SourceHashFromBytes(data); rawHash == auth.Attributes[cliproxyauth.SourceHashAttributeKey] {
 		t.Fatal("expected canonical source hash to differ from raw file hash")
+	}
+}
+
+func TestFileTokenStoreReadAuthFilePrefersMetadataPlanTypeForCodex(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "auth.json")
+	data := []byte(`{"type":"codex","email":"reader@example.com","plan_type":"team","id_token":"` + testCodexIDToken("acct-1", "pro") + `"}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write auth file: %v", err)
+	}
+
+	store := NewFileTokenStore()
+	auth, err := store.readAuthFile(path, dir)
+	if err != nil {
+		t.Fatalf("readAuthFile returned error: %v", err)
+	}
+	if auth == nil {
+		t.Fatal("expected auth to be loaded")
+	}
+	if got := auth.Attributes["plan_type"]; got != "team" {
+		t.Fatalf("plan_type = %q, want %q", got, "team")
 	}
 }
 
@@ -235,6 +257,17 @@ func TestFileTokenStoreSaveVertexStorageBackedAuthPreservesMetadataOnlyFields(t 
 
 type testTokenStorage struct {
 	metadata map[string]any
+}
+
+func testCodexIDToken(accountID string, planType string) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+	payload, _ := json.Marshal(map[string]any{
+		"https://api.openai.com/auth": map[string]any{
+			"chatgpt_account_id": accountID,
+			"chatgpt_plan_type":  planType,
+		},
+	})
+	return header + "." + base64.RawURLEncoding.EncodeToString(payload) + ".sig"
 }
 
 func (s *testTokenStorage) SetMetadata(meta map[string]any) {

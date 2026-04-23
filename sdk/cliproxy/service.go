@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api"
+	internalcodex "github.com/router-for-me/CLIProxyAPI/v6/internal/auth/codex"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/runtime/executor"
 	internalusage "github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
@@ -2822,6 +2823,9 @@ func codexPlanTypeForRegistration(auth *coreauth.Auth) string {
 	planType := ""
 	if auth != nil && auth.Attributes != nil {
 		planType = strings.ToLower(strings.TrimSpace(auth.Attributes["plan_type"]))
+	}
+	if planType == "" && auth != nil {
+		planType = strings.ToLower(strings.TrimSpace(internalcodex.EffectivePlanType(auth.Metadata)))
 	}
 	switch planType {
 	case "plus", "free", "team", "business", "go":

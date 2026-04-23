@@ -38,6 +38,8 @@ type Handler struct {
 	cfg                 *config.Config
 	configFilePath      string
 	mu                  sync.Mutex
+	codexPlanRefreshMu  sync.Mutex
+	codexPlanRefresh    codexPlanTypeRefreshTask
 	attemptsMu          sync.Mutex
 	failedAttempts      map[string]*attemptInfo // keyed by client IP
 	authManager         *coreauth.Manager
