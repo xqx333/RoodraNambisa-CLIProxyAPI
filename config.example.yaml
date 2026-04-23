@@ -22,6 +22,12 @@ remote-management:
   # Leave empty to disable the Management API entirely (404 for all /v0/management routes).
   secret-key: ""
 
+  # Optional custom path segment for management page, management API and OAuth callbacks.
+  # Example: "my-random-path" moves them to /my-random-path/management.html,
+  # /my-random-path/v0/management/... and /my-random-path/{provider}/callback.
+  # Leave empty to keep the legacy fixed paths.
+  access-path: ""
+
   # Disable the bundled management control panel asset download and HTTP route when true.
   disable-control-panel: false
 

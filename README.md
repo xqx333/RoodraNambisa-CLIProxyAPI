@@ -125,6 +125,18 @@ CLIProxyAPI 用户手册：[https://help.router-for.me/cn/](https://help.router-
 
 请参见 [MANAGEMENT_API_CN.md](https://help.router-for.me/cn/management/api)
 
+### 管理端访问路径隐藏
+
+如果不希望管理页面和登录/OAuth 入口暴露在固定路径上，可以在配置中设置自定义路径段：
+
+```yaml
+remote-management:
+  secret-key: "your-management-key"
+  access-path: "my-random-path"
+```
+
+设置后管理页面会移动到 `/my-random-path/management.html`，管理 API 会移动到 `/my-random-path/v0/management/...`，OAuth 回调也会使用 `/my-random-path/{provider}/callback`。`access-path` 只是路径隐藏，不替代 `secret-key`，管理 API 仍然需要管理密钥。
+
 ## Amp CLI 支持
 
 CLIProxyAPI 已内置对 [Amp CLI](https://ampcode.com) 和 Amp IDE 扩展的支持，可让你使用自己的 Google/ChatGPT/Claude OAuth 订阅来配合 Amp 编码工具：

@@ -19,6 +19,10 @@ import (
 )
 
 func newTestServer(t *testing.T) *Server {
+	return newTestServerWithConfig(t, nil)
+}
+
+func newTestServerWithConfig(t *testing.T, mutate func(*proxyconfig.Config)) *Server {
 	t.Helper()
 
 	gin.SetMode(gin.TestMode)
@@ -38,6 +42,9 @@ func newTestServer(t *testing.T) *Server {
 		Debug:                  true,
 		LoggingToFile:          false,
 		UsageStatisticsEnabled: false,
+	}
+	if mutate != nil {
+		mutate(cfg)
 	}
 
 	authManager := auth.NewManager(nil, nil, nil)
@@ -102,6 +109,64 @@ func TestV1InternalMethodRequiresAuth(t *testing.T) {
 	server.engine.ServeHTTP(authorizedRec, authorizedReq)
 	if authorizedRec.Code == http.StatusUnauthorized {
 		t.Fatalf("authorized request unexpectedly returned 401; body=%s", authorizedRec.Body.String())
+	}
+}
+
+func TestManagementAccessPathPrefixesManagementRoutesAndCallbacks(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "secret")
+
+	server := newTestServerWithConfig(t, func(cfg *proxyconfig.Config) {
+		cfg.RemoteManagement.AccessPath = "secret-token"
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/secret-token/v0/management/config", nil)
+	req.Header.Set("X-Management-Key", "secret")
+	rr := httptest.NewRecorder()
+	server.engine.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("prefixed management route status = %d, want %d; body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	oldReq := httptest.NewRequest(http.MethodGet, "/v0/management/config", nil)
+	oldReq.Header.Set("X-Management-Key", "secret")
+	oldRec := httptest.NewRecorder()
+	server.engine.ServeHTTP(oldRec, oldReq)
+	if oldRec.Code != http.StatusNotFound {
+		t.Fatalf("unprefixed management route status = %d, want %d; body=%s", oldRec.Code, http.StatusNotFound, oldRec.Body.String())
+	}
+
+	callbackReq := httptest.NewRequest(http.MethodGet, "/secret-token/codex/callback", nil)
+	callbackRec := httptest.NewRecorder()
+	server.engine.ServeHTTP(callbackRec, callbackReq)
+	if callbackRec.Code != http.StatusOK {
+		t.Fatalf("prefixed callback status = %d, want %d; body=%s", callbackRec.Code, http.StatusOK, callbackRec.Body.String())
+	}
+
+	oldCallbackReq := httptest.NewRequest(http.MethodGet, "/codex/callback", nil)
+	oldCallbackRec := httptest.NewRecorder()
+	server.engine.ServeHTTP(oldCallbackRec, oldCallbackReq)
+	if oldCallbackRec.Code != http.StatusNotFound {
+		t.Fatalf("unprefixed callback status = %d, want %d; body=%s", oldCallbackRec.Code, http.StatusNotFound, oldCallbackRec.Body.String())
+	}
+
+	updatedCfg := *server.cfg
+	updatedCfg.RemoteManagement.AccessPath = "new-secret-token"
+	server.UpdateClients(&updatedCfg)
+
+	staleReq := httptest.NewRequest(http.MethodGet, "/secret-token/v0/management/config", nil)
+	staleReq.Header.Set("X-Management-Key", "secret")
+	staleRec := httptest.NewRecorder()
+	server.engine.ServeHTTP(staleRec, staleReq)
+	if staleRec.Code != http.StatusNotFound {
+		t.Fatalf("stale prefixed management route status = %d, want %d; body=%s", staleRec.Code, http.StatusNotFound, staleRec.Body.String())
+	}
+
+	newReq := httptest.NewRequest(http.MethodGet, "/new-secret-token/v0/management/config", nil)
+	newReq.Header.Set("X-Management-Key", "secret")
+	newRec := httptest.NewRecorder()
+	server.engine.ServeHTTP(newRec, newReq)
+	if newRec.Code != http.StatusOK {
+		t.Fatalf("updated prefixed management route status = %d, want %d; body=%s", newRec.Code, http.StatusOK, newRec.Body.String())
 	}
 }
 

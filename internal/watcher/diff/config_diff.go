@@ -290,6 +290,18 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 	if oldCfg.RemoteManagement.DisableAutoUpdatePanel != newCfg.RemoteManagement.DisableAutoUpdatePanel {
 		changes = append(changes, fmt.Sprintf("remote-management.disable-auto-update-panel: %t -> %t", oldCfg.RemoteManagement.DisableAutoUpdatePanel, newCfg.RemoteManagement.DisableAutoUpdatePanel))
 	}
+	oldAccessPath := strings.TrimSpace(oldCfg.RemoteManagement.AccessPath)
+	newAccessPath := strings.TrimSpace(newCfg.RemoteManagement.AccessPath)
+	if oldAccessPath != newAccessPath {
+		switch {
+		case oldAccessPath == "" && newAccessPath != "":
+			changes = append(changes, "remote-management.access-path: created")
+		case oldAccessPath != "" && newAccessPath == "":
+			changes = append(changes, "remote-management.access-path: deleted")
+		default:
+			changes = append(changes, "remote-management.access-path: updated")
+		}
+	}
 	oldPanelRepo := strings.TrimSpace(oldCfg.RemoteManagement.PanelGitHubRepository)
 	newPanelRepo := strings.TrimSpace(newCfg.RemoteManagement.PanelGitHubRepository)
 	if oldPanelRepo != newPanelRepo {

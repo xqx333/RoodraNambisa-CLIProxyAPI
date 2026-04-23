@@ -195,6 +195,8 @@ type RemoteManagement struct {
 	AllowRemote bool `yaml:"allow-remote"`
 	// SecretKey is the management key (plaintext or bcrypt hashed). YAML key intentionally 'secret-key'.
 	SecretKey string `yaml:"secret-key"`
+	// AccessPath optionally hides management routes behind a custom single path segment.
+	AccessPath string `yaml:"access-path"`
 	// DisableControlPanel skips serving and syncing the bundled management UI when true.
 	DisableControlPanel bool `yaml:"disable-control-panel"`
 	// DisableAutoUpdatePanel disables automatic periodic background updates of the management panel asset from GitHub.
@@ -684,6 +686,11 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	if cfg.RemoteManagement.PanelGitHubRepository == "" {
 		cfg.RemoteManagement.PanelGitHubRepository = DefaultPanelGitHubRepository
 	}
+	accessPath, errAccessPath := NormalizeManagementAccessPath(cfg.RemoteManagement.AccessPath)
+	if errAccessPath != nil {
+		return nil, fmt.Errorf("invalid remote-management.access-path: %w", errAccessPath)
+	}
+	cfg.RemoteManagement.AccessPath = accessPath
 
 	cfg.Images.CodexModel = strings.TrimSpace(cfg.Images.CodexModel)
 	if cfg.Images.CodexModel == "" {

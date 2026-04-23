@@ -170,10 +170,14 @@ type Server struct {
 	// ampModule is the Amp routing module for model mapping hot-reload
 	ampModule *ampmodule.AmpModule
 
-	// managementRoutesRegistered tracks whether the management routes have been attached to the engine.
-	managementRoutesRegistered atomic.Bool
 	// managementRoutesEnabled controls whether management endpoints serve real handlers.
 	managementRoutesEnabled atomic.Bool
+	// managementRoutesMu protects route registration maps for hot-reloaded access paths.
+	managementRoutesMu sync.Mutex
+	// managementAPIPrefixes tracks registered management API prefixes.
+	managementAPIPrefixes map[string]struct{}
+	// managementSurfacePaths tracks registered management page and OAuth callback paths.
+	managementSurfacePaths map[string]struct{}
 
 	// envManagementSecret indicates whether MANAGEMENT_PASSWORD is configured.
 	envManagementSecret bool
@@ -250,16 +254,18 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 
 	// Create server instance
 	s := &Server{
-		engine:              engine,
-		handlers:            handlers.NewBaseAPIHandlers(&cfg.SDKConfig, authManager),
-		cfg:                 cfg,
-		accessManager:       accessManager,
-		requestLogger:       requestLogger,
-		loggerToggle:        toggle,
-		configFilePath:      configFilePath,
-		currentPath:         wd,
-		envManagementSecret: envManagementSecret,
-		wsRoutes:            make(map[string]struct{}),
+		engine:                 engine,
+		handlers:               handlers.NewBaseAPIHandlers(&cfg.SDKConfig, authManager),
+		cfg:                    cfg,
+		accessManager:          accessManager,
+		requestLogger:          requestLogger,
+		loggerToggle:           toggle,
+		configFilePath:         configFilePath,
+		currentPath:            wd,
+		envManagementSecret:    envManagementSecret,
+		wsRoutes:               make(map[string]struct{}),
+		managementAPIPrefixes:  make(map[string]struct{}),
+		managementSurfacePaths: make(map[string]struct{}),
 	}
 	s.wsAuthEnabled.Store(cfg.WebsocketAuth)
 	// Save initial YAML snapshot
@@ -341,7 +347,7 @@ func (s *Server) setupRoutes() {
 	s.engine.GET("/healthz", healthzHandler)
 	s.engine.HEAD("/healthz", healthzHandler)
 
-	s.engine.GET("/management.html", s.serveManagementControlPanel)
+	s.registerManagementSurfaceRoutes()
 	openaiHandlers := openai.NewOpenAIAPIHandler(s.handlers)
 	geminiHandlers := gemini.NewGeminiAPIHandler(s.handlers)
 	geminiCLIHandlers := gemini.NewGeminiCLIAPIHandler(s.handlers)
@@ -387,65 +393,6 @@ func (s *Server) setupRoutes() {
 	})
 	s.engine.POST("/v1internal:method", AuthMiddleware(s.accessManager), geminiCLIHandlers.CLIHandler)
 
-	// OAuth callback endpoints (reuse main server port)
-	// These endpoints receive provider redirects and persist
-	// the short-lived code/state for the waiting goroutine.
-	s.engine.GET("/anthropic/callback", func(c *gin.Context) {
-		code := c.Query("code")
-		state := c.Query("state")
-		errStr := c.Query("error")
-		if errStr == "" {
-			errStr = c.Query("error_description")
-		}
-		if state != "" {
-			_, _ = managementHandlers.WriteOAuthCallbackFileForPendingSession(s.cfg.AuthDir, "anthropic", state, code, errStr)
-		}
-		c.Header("Content-Type", "text/html; charset=utf-8")
-		c.String(http.StatusOK, oauthCallbackSuccessHTML)
-	})
-
-	s.engine.GET("/codex/callback", func(c *gin.Context) {
-		code := c.Query("code")
-		state := c.Query("state")
-		errStr := c.Query("error")
-		if errStr == "" {
-			errStr = c.Query("error_description")
-		}
-		if state != "" {
-			_, _ = managementHandlers.WriteOAuthCallbackFileForPendingSession(s.cfg.AuthDir, "codex", state, code, errStr)
-		}
-		c.Header("Content-Type", "text/html; charset=utf-8")
-		c.String(http.StatusOK, oauthCallbackSuccessHTML)
-	})
-
-	s.engine.GET("/google/callback", func(c *gin.Context) {
-		code := c.Query("code")
-		state := c.Query("state")
-		errStr := c.Query("error")
-		if errStr == "" {
-			errStr = c.Query("error_description")
-		}
-		if state != "" {
-			_, _ = managementHandlers.WriteOAuthCallbackFileForPendingSession(s.cfg.AuthDir, "gemini", state, code, errStr)
-		}
-		c.Header("Content-Type", "text/html; charset=utf-8")
-		c.String(http.StatusOK, oauthCallbackSuccessHTML)
-	})
-
-	s.engine.GET("/antigravity/callback", func(c *gin.Context) {
-		code := c.Query("code")
-		state := c.Query("state")
-		errStr := c.Query("error")
-		if errStr == "" {
-			errStr = c.Query("error_description")
-		}
-		if state != "" {
-			_, _ = managementHandlers.WriteOAuthCallbackFileForPendingSession(s.cfg.AuthDir, "antigravity", state, code, errStr)
-		}
-		c.Header("Content-Type", "text/html; charset=utf-8")
-		c.String(http.StatusOK, oauthCallbackSuccessHTML)
-	})
-
 	// Management routes are registered lazily by registerManagementRoutes when a secret is configured.
 }
 
@@ -486,18 +433,85 @@ func (s *Server) AttachWebsocketRoute(path string, handler http.Handler) {
 	s.engine.GET(trimmed, conditionalAuth, finalHandler)
 }
 
+func (s *Server) currentManagementAccessPrefix() string {
+	if s == nil || s.cfg == nil {
+		return ""
+	}
+	return config.ManagementAccessPathPrefix(s.cfg.RemoteManagement.AccessPath)
+}
+
+func (s *Server) activeManagementPrefixMiddleware(registeredPrefix string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if s.currentManagementAccessPrefix() != registeredPrefix {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+		c.Next()
+	}
+}
+
+func (s *Server) registerManagementSurfaceRoutes() {
+	if s == nil || s.engine == nil {
+		return
+	}
+	prefix := s.currentManagementAccessPrefix()
+	routes := []struct {
+		path    string
+		handler gin.HandlerFunc
+	}{
+		{config.JoinManagementAccessPath(prefix, "/management.html"), s.serveManagementControlPanel},
+		{config.JoinManagementAccessPath(prefix, "/anthropic/callback"), s.oauthCallbackHandler("anthropic")},
+		{config.JoinManagementAccessPath(prefix, "/codex/callback"), s.oauthCallbackHandler("codex")},
+		{config.JoinManagementAccessPath(prefix, "/google/callback"), s.oauthCallbackHandler("gemini")},
+		{config.JoinManagementAccessPath(prefix, "/antigravity/callback"), s.oauthCallbackHandler("antigravity")},
+	}
+
+	s.managementRoutesMu.Lock()
+	defer s.managementRoutesMu.Unlock()
+	for _, route := range routes {
+		if _, exists := s.managementSurfacePaths[route.path]; exists {
+			continue
+		}
+		s.managementSurfacePaths[route.path] = struct{}{}
+		s.engine.GET(route.path, s.activeManagementPrefixMiddleware(prefix), route.handler)
+	}
+}
+
+func (s *Server) oauthCallbackHandler(provider string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		code := c.Query("code")
+		state := c.Query("state")
+		errStr := c.Query("error")
+		if errStr == "" {
+			errStr = c.Query("error_description")
+		}
+		if state != "" {
+			_, _ = managementHandlers.WriteOAuthCallbackFileForPendingSession(s.cfg.AuthDir, provider, state, code, errStr)
+		}
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(http.StatusOK, oauthCallbackSuccessHTML)
+	}
+}
+
 func (s *Server) registerManagementRoutes() {
 	if s == nil || s.engine == nil || s.mgmt == nil {
 		return
 	}
-	if !s.managementRoutesRegistered.CompareAndSwap(false, true) {
+	prefix := s.currentManagementAccessPrefix()
+	apiPrefix := config.JoinManagementAccessPath(prefix, "/v0/management")
+
+	s.managementRoutesMu.Lock()
+	if _, exists := s.managementAPIPrefixes[apiPrefix]; exists {
+		s.managementRoutesMu.Unlock()
 		return
 	}
+	s.managementAPIPrefixes[apiPrefix] = struct{}{}
+	s.managementRoutesMu.Unlock()
 
-	log.Info("management routes registered after secret key configuration")
+	log.Infof("management routes registered at %s", apiPrefix)
 
-	mgmt := s.engine.Group("/v0/management")
-	mgmt.Use(s.managementAvailabilityMiddleware(), s.mgmt.Middleware())
+	mgmt := s.engine.Group(apiPrefix)
+	mgmt.Use(s.activeManagementPrefixMiddleware(prefix), s.managementAvailabilityMiddleware(), s.mgmt.Middleware())
 	{
 		mgmt.GET("/usage", s.mgmt.GetUsageStatistics)
 		mgmt.GET("/usage/export", s.mgmt.ExportUsageStatistics)
@@ -936,6 +950,9 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 		util.SetLogLevel(cfg)
 	}
 
+	s.cfg = cfg
+	s.registerManagementSurfaceRoutes()
+
 	prevSecretEmpty := true
 	if oldCfg != nil {
 		prevSecretEmpty = oldCfg.RemoteManagement.SecretKey == ""
@@ -967,9 +984,11 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 			s.managementRoutesEnabled.Store(!newSecretEmpty)
 		}
 	}
+	if s.managementRoutesEnabled.Load() {
+		s.registerManagementRoutes()
+	}
 
 	s.applyAccessConfig(oldCfg, cfg)
-	s.cfg = cfg
 	s.wsAuthEnabled.Store(cfg.WebsocketAuth)
 	if oldCfg != nil && s.wsAuthChanged != nil && oldCfg.WebsocketAuth != cfg.WebsocketAuth {
 		s.wsAuthChanged(oldCfg.WebsocketAuth, cfg.WebsocketAuth)
