@@ -619,8 +619,8 @@ func preserveRequestedModelSuffix(requestedModel, resolved string) string {
 	return preserveResolvedModelSuffix(resolved, thinking.ParseSuffix(requestedModel))
 }
 
-func (m *Manager) executionModelCandidates(auth *Auth, routeModel string) []string {
-	requestedModel := rewriteModelForAuth(routeModel, auth)
+func (m *Manager) executionModelCandidates(auth *Auth, executionRouteModel string) []string {
+	requestedModel := rewriteModelForAuth(executionRouteModel, auth)
 	requestedModel = m.applyOAuthModelAlias(auth, requestedModel)
 	if pool := m.resolveOpenAICompatUpstreamModelPool(auth, requestedModel); len(pool) > 0 {
 		if len(pool) == 1 {
@@ -690,14 +690,14 @@ func (m *Manager) filterExecutionModels(auth *Auth, routeModel string, candidate
 	return out
 }
 
-func (m *Manager) preparedExecutionModels(auth *Auth, routeModel string) ([]string, bool) {
-	candidates := m.executionModelCandidates(auth, routeModel)
+func (m *Manager) preparedExecutionModels(auth *Auth, routeModel string, opts cliproxyexecutor.Options) ([]string, bool) {
+	candidates := m.executionModelCandidates(auth, effectiveExecutionRouteModel(routeModel, opts))
 	pooled := len(candidates) > 1
 	return m.filterExecutionModels(auth, routeModel, candidates, pooled), pooled
 }
 
-func (m *Manager) prepareExecutionModels(auth *Auth, routeModel string) []string {
-	models, _ := m.preparedExecutionModels(auth, routeModel)
+func (m *Manager) prepareExecutionModels(auth *Auth, routeModel string, opts cliproxyexecutor.Options) []string {
+	models, _ := m.preparedExecutionModels(auth, routeModel, opts)
 	return models
 }
 
@@ -1604,7 +1604,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 			execCtx = context.WithValue(execCtx, "cliproxy.roundtripper", rt)
 		}
 
-		models, pooled := m.preparedExecutionModels(auth, routeModel)
+		models, pooled := m.preparedExecutionModels(auth, routeModel, opts)
 		if len(models) == 0 {
 			continue
 		}
@@ -1694,7 +1694,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 			execCtx = context.WithValue(execCtx, "cliproxy.roundtripper", rt)
 		}
 
-		models, pooled := m.preparedExecutionModels(auth, routeModel)
+		models, pooled := m.preparedExecutionModels(auth, routeModel, opts)
 		if len(models) == 0 {
 			continue
 		}
@@ -1795,7 +1795,7 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 			execCtx = context.WithValue(execCtx, roundTripperContextKey{}, rt)
 			execCtx = context.WithValue(execCtx, "cliproxy.roundtripper", rt)
 		}
-		models, pooled := m.preparedExecutionModels(auth, routeModel)
+		models, pooled := m.preparedExecutionModels(auth, routeModel, opts)
 		if len(models) == 0 {
 			continue
 		}
@@ -1853,6 +1853,31 @@ func hasRequestedModelMetadata(meta map[string]any) bool {
 	default:
 		return false
 	}
+}
+
+func executionModelOverrideFromMetadata(meta map[string]any) string {
+	if len(meta) == 0 {
+		return ""
+	}
+	raw, ok := meta[cliproxyexecutor.ExecutionModelOverrideMetadataKey]
+	if !ok || raw == nil {
+		return ""
+	}
+	switch v := raw.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case []byte:
+		return strings.TrimSpace(string(v))
+	default:
+		return ""
+	}
+}
+
+func effectiveExecutionRouteModel(routeModel string, opts cliproxyexecutor.Options) string {
+	if override := executionModelOverrideFromMetadata(opts.Metadata); override != "" {
+		return override
+	}
+	return routeModel
 }
 
 func pinnedAuthIDFromMetadata(meta map[string]any) string {

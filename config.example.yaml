@@ -145,6 +145,7 @@ nonstream-keepalive-interval: 0
 # images:
 #   codex-model: "gpt-5.4"          # Outer Responses model used to invoke the image tool.
 #   image-model: "gpt-image-2"      # image_generation tool model exposed by /v1/images/*.
+#   enable-free-plan-image-model: false # Allow Codex free-plan auths to register/use the image model.
 #   enable-n-aggregation: false     # Split n > 1 into multiple Codex image calls and aggregate results.
 #   unsupported-status-code: 400    # Status code for unsupported image options such as response_format=url.
 #   override-response-format-url: false # Coerce response_format=url to b64_json.

@@ -2197,6 +2197,7 @@ func (s *Service) Run(ctx context.Context) error {
 		previousUsageInterval := time.Duration(0)
 		var previousSessionAffinity bool
 		var previousSessionAffinityTTL string
+		var previousCfgSnapshot *config.Config
 		s.cfgMu.RLock()
 		if s.cfg != nil {
 			previousStrategy = strings.ToLower(strings.TrimSpace(s.cfg.Routing.Strategy))
@@ -2204,6 +2205,7 @@ func (s *Service) Run(ctx context.Context) error {
 			previousUsageInterval = usagePersistenceIntervalForConfig(s.cfg)
 			previousSessionAffinity = s.cfg.Routing.ClaudeCodeSessionAffinity || s.cfg.Routing.SessionAffinity
 			previousSessionAffinityTTL = s.cfg.Routing.SessionAffinityTTL
+			previousCfgSnapshot = s.cfg
 		}
 		s.cfgMu.RUnlock()
 
@@ -2277,6 +2279,14 @@ func (s *Service) Run(ctx context.Context) error {
 			s.coreManager.SetOAuthModelAlias(newCfg.OAuthModelAlias)
 		}
 		s.rebindExecutors()
+		if s.coreManager != nil && shouldRefreshCodexImageRegistrations(previousCfgSnapshot, newCfg) {
+			for _, auth := range s.coreManager.List() {
+				if auth == nil || !strings.EqualFold(strings.TrimSpace(auth.Provider), "codex") {
+					continue
+				}
+				s.refreshModelRegistrationForAuth(auth)
+			}
+		}
 		s.applyUsagePersistenceConfigChange(previousUsageEnabled, previousUsageInterval, newCfg)
 		s.warnAuthMaintenanceConfig(newCfg.AuthMaintenance)
 		s.wakeAuthMaintenance()
@@ -2500,22 +2510,8 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 		}
 		models = applyExcludedModels(models, excluded)
 	case "codex":
-		codexPlanType := ""
-		if a.Attributes != nil {
-			codexPlanType = strings.TrimSpace(a.Attributes["plan_type"])
-		}
-		switch strings.ToLower(codexPlanType) {
-		case "pro":
-			models = registry.GetCodexProModels()
-		case "plus":
-			models = registry.GetCodexPlusModels()
-		case "team", "business", "go":
-			models = registry.GetCodexTeamModels()
-		case "free":
-			models = registry.GetCodexFreeModels()
-		default:
-			models = registry.GetCodexProModels()
-		}
+		codexPlanType := codexPlanTypeForRegistration(a)
+		models = codexModelsForPlan(codexPlanType)
 		if entry := s.resolveConfigCodexKey(a); entry != nil {
 			if len(entry.Models) > 0 {
 				models = buildCodexConfigModels(entry)
@@ -2523,6 +2519,13 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 			if authKind == "apikey" {
 				excluded = entry.ExcludedModels
 			}
+		}
+		allowImageModel := codexPlanAllowsImageModel(codexPlanType)
+		if strings.EqualFold(codexPlanType, "free") && freePlanImageModelEnabled(s.cfg) {
+			allowImageModel = true
+		}
+		if allowImageModel {
+			models = upsertModelInfo(models, codexDynamicImageModelInfo(s.cfg))
 		}
 		models = applyExcludedModels(models, excluded)
 	case "kimi":
@@ -2815,6 +2818,108 @@ func (s *Service) oauthExcludedModels(provider, authKind string) []string {
 	return cfg.OAuthExcludedModels[providerKey]
 }
 
+func codexPlanTypeForRegistration(auth *coreauth.Auth) string {
+	planType := ""
+	if auth != nil && auth.Attributes != nil {
+		planType = strings.ToLower(strings.TrimSpace(auth.Attributes["plan_type"]))
+	}
+	switch planType {
+	case "plus", "free", "team", "business", "go":
+		return planType
+	case "pro":
+		return "pro"
+	default:
+		return "pro"
+	}
+}
+
+func codexModelsForPlan(planType string) []*ModelInfo {
+	switch strings.ToLower(strings.TrimSpace(planType)) {
+	case "plus":
+		return registry.GetCodexPlusModels()
+	case "free":
+		return registry.GetCodexFreeModels()
+	case "team", "business", "go":
+		return registry.GetCodexTeamModels()
+	default:
+		return registry.GetCodexProModels()
+	}
+}
+
+func codexPlanAllowsImageModel(planType string) bool {
+	switch strings.ToLower(strings.TrimSpace(planType)) {
+	case "plus", "pro", "team", "business", "go":
+		return true
+	case "free":
+		return false
+	default:
+		return false
+	}
+}
+
+func configuredImagesImageModel(cfg *config.Config) string {
+	if cfg == nil {
+		return "gpt-image-2"
+	}
+	modelID := strings.TrimSpace(cfg.Images.ImageModel)
+	if modelID == "" {
+		return "gpt-image-2"
+	}
+	return modelID
+}
+
+func shouldRefreshCodexImageRegistrations(previousCfg, nextCfg *config.Config) bool {
+	if configuredImagesImageModel(previousCfg) != configuredImagesImageModel(nextCfg) {
+		return true
+	}
+	return freePlanImageModelEnabled(previousCfg) != freePlanImageModelEnabled(nextCfg)
+}
+
+func freePlanImageModelEnabled(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	return cfg.Images.EnableFreePlanImageModel
+}
+
+func codexDynamicImageModelInfo(cfg *config.Config) *ModelInfo {
+	modelID := configuredImagesImageModel(cfg)
+	if modelID == "" {
+		return nil
+	}
+	return &ModelInfo{
+		ID:          modelID,
+		Object:      "model",
+		Created:     1704067200, // 2024-01-01
+		OwnedBy:     "openai",
+		Type:        "openai",
+		DisplayName: modelID,
+		Version:     modelID,
+	}
+}
+
+func upsertModelInfo(models []*ModelInfo, extra *ModelInfo) []*ModelInfo {
+	if extra == nil {
+		return models
+	}
+	extraID := strings.TrimSpace(extra.ID)
+	if extraID == "" {
+		return models
+	}
+	out := make([]*ModelInfo, 0, len(models)+1)
+	for _, model := range models {
+		if model == nil {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(model.ID), extraID) {
+			continue
+		}
+		out = append(out, model)
+	}
+	out = append(out, extra)
+	return out
+}
+
 func applyExcludedModels(models []*ModelInfo, excluded []string) []*ModelInfo {
 	if len(models) == 0 || len(excluded) == 0 {
 		return models
@@ -3011,7 +3116,7 @@ func buildCodexConfigModels(entry *config.CodexKey) []*ModelInfo {
 	if entry == nil {
 		return nil
 	}
-	return registry.WithCodexBuiltins(buildConfigModels(entry.Models, "openai", "openai"))
+	return buildConfigModels(entry.Models, "openai", "openai")
 }
 
 func rewriteModelInfoName(name, oldID, newID string) string {

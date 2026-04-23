@@ -10,6 +10,10 @@ import (
 // RequestedModelMetadataKey stores the client-requested model name in Options.Metadata.
 const RequestedModelMetadataKey = "requested_model"
 
+// ExecutionModelOverrideMetadataKey overrides the upstream execution model while
+// keeping auth selection bound to Request.Model.
+const ExecutionModelOverrideMetadataKey = "execution_model_override"
+
 const (
 	// PinnedAuthMetadataKey locks execution to a specific auth ID.
 	PinnedAuthMetadataKey = "pinned_auth_id"

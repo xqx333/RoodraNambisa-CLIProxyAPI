@@ -80,6 +80,7 @@
 images:
   codex-model: "gpt-5.4"
   image-model: "gpt-image-2"
+  enable-free-plan-image-model: false
   enable-n-aggregation: false
   unsupported-status-code: 400
   override-response-format-url: false
@@ -91,6 +92,7 @@ images:
 说明：
 
 - `model` 默认支持 `gpt-image-2`；如需换成其他 Codex 支持的图片 tool 模型，修改 `images.image-model`，请求里的 `model` 也要使用同一个值。
+- 图片模型会动态注册到支持图片的 Codex 凭证上：`plus`、`pro`、`team`、`business`、`go` 默认可见且可请求；`free` 默认不可见也不可请求，开启 `enable-free-plan-image-model` 后才会对 free 凭证开放。
 - `response_format=url` 默认不支持，请求传入 `url` 会直接返回错误。开启 `override-response-format-url` 后会自动按 `b64_json` 处理；开启 `response-format-url-data-url` 后会把图片 base64 包装成 `data:<mime>;base64,...` 放到 `url` 字段返回。
 - `background=transparent` 默认保持上游兼容行为，会原样透传给 Codex；开启 `override-transparent-background` 后会自动改成 `auto` 再转发给 Codex。
 - `input_fidelity` 默认保持上游兼容行为，会原样透传给 Codex；实测 `gpt-image-2` 会返回 `invalid_input_fidelity_model`。开启 `override-input-fidelity` 后，所有图片请求都会自动不透传该字段。

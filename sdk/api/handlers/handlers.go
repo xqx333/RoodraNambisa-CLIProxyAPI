@@ -516,21 +516,30 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 // ExecuteWithProviders executes a non-streaming request against an explicit provider set.
 // It bypasses model-registry provider lookup while preserving request metadata and error formatting.
 func (h *BaseAPIHandler) ExecuteWithProviders(ctx context.Context, providers []string, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, http.Header, *interfaces.ErrorMessage) {
-	normalizedModel := strings.TrimSpace(modelName)
-	if normalizedModel == "" {
+	return h.ExecuteWithProvidersAndExecutionModel(ctx, providers, handlerType, modelName, "", rawJSON, alt)
+}
+
+// ExecuteWithProvidersAndExecutionModel executes a non-streaming request against an explicit
+// provider set while allowing auth selection and upstream execution to use different model IDs.
+func (h *BaseAPIHandler) ExecuteWithProvidersAndExecutionModel(ctx context.Context, providers []string, handlerType, routeModelName, executionModelName string, rawJSON []byte, alt string) ([]byte, http.Header, *interfaces.ErrorMessage) {
+	normalizedRouteModel := strings.TrimSpace(routeModelName)
+	if normalizedRouteModel == "" {
 		return nil, nil, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("model is required")}
 	}
 	if len(providers) == 0 {
-		return nil, nil, &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: fmt.Errorf("no provider configured for model %s", normalizedModel)}
+		return nil, nil, &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: fmt.Errorf("no provider configured for model %s", normalizedRouteModel)}
 	}
 	reqMeta := requestExecutionMetadata(ctx)
-	reqMeta[coreexecutor.RequestedModelMetadataKey] = normalizedModel
+	reqMeta[coreexecutor.RequestedModelMetadataKey] = normalizedRouteModel
+	if normalizedExecutionModel := strings.TrimSpace(executionModelName); normalizedExecutionModel != "" && normalizedExecutionModel != normalizedRouteModel {
+		reqMeta[coreexecutor.ExecutionModelOverrideMetadataKey] = normalizedExecutionModel
+	}
 	payload := rawJSON
 	if len(payload) == 0 {
 		payload = nil
 	}
 	req := coreexecutor.Request{
-		Model:   normalizedModel,
+		Model:   normalizedRouteModel,
 		Payload: payload,
 	}
 	opts := coreexecutor.Options{
@@ -542,7 +551,7 @@ func (h *BaseAPIHandler) ExecuteWithProviders(ctx context.Context, providers []s
 	opts.Metadata = reqMeta
 	resp, err := h.AuthManager.Execute(ctx, providers, req, opts)
 	if err != nil {
-		return nil, nil, executionErrorMessage(err, providers, normalizedModel)
+		return nil, nil, executionErrorMessage(err, providers, normalizedRouteModel)
 	}
 	if !PassthroughHeadersEnabled(h.Cfg) {
 		return resp.Payload, nil, nil
@@ -553,8 +562,14 @@ func (h *BaseAPIHandler) ExecuteWithProviders(ctx context.Context, providers []s
 // ExecuteStreamWithProviders executes a streaming request against an explicit provider set.
 // It bypasses model-registry provider lookup while preserving request metadata and error formatting.
 func (h *BaseAPIHandler) ExecuteStreamWithProviders(ctx context.Context, providers []string, handlerType, modelName string, rawJSON []byte, alt string) (<-chan []byte, http.Header, <-chan *interfaces.ErrorMessage) {
-	normalizedModel := strings.TrimSpace(modelName)
-	if normalizedModel == "" {
+	return h.ExecuteStreamWithProvidersAndExecutionModel(ctx, providers, handlerType, modelName, "", rawJSON, alt)
+}
+
+// ExecuteStreamWithProvidersAndExecutionModel executes a streaming request against an explicit
+// provider set while allowing auth selection and upstream execution to use different model IDs.
+func (h *BaseAPIHandler) ExecuteStreamWithProvidersAndExecutionModel(ctx context.Context, providers []string, handlerType, routeModelName, executionModelName string, rawJSON []byte, alt string) (<-chan []byte, http.Header, <-chan *interfaces.ErrorMessage) {
+	normalizedRouteModel := strings.TrimSpace(routeModelName)
+	if normalizedRouteModel == "" {
 		errChan := make(chan *interfaces.ErrorMessage, 1)
 		errChan <- &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("model is required")}
 		close(errChan)
@@ -562,11 +577,11 @@ func (h *BaseAPIHandler) ExecuteStreamWithProviders(ctx context.Context, provide
 	}
 	if len(providers) == 0 {
 		errChan := make(chan *interfaces.ErrorMessage, 1)
-		errChan <- &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: fmt.Errorf("no provider configured for model %s", normalizedModel)}
+		errChan <- &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: fmt.Errorf("no provider configured for model %s", normalizedRouteModel)}
 		close(errChan)
 		return nil, nil, errChan
 	}
-	return h.executeStreamWithResolvedProviders(ctx, providers, handlerType, normalizedModel, rawJSON, alt)
+	return h.executeStreamWithResolvedProviders(ctx, providers, handlerType, normalizedRouteModel, executionModelName, rawJSON, alt)
 }
 
 // ExecuteCountWithAuthManager executes a non-streaming request via the core auth manager.
@@ -627,21 +642,24 @@ func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handl
 		close(errChan)
 		return nil, nil, errChan
 	}
-	return h.executeStreamWithResolvedProviders(ctx, providers, handlerType, normalizedModel, rawJSON, alt)
+	return h.executeStreamWithResolvedProviders(ctx, providers, handlerType, normalizedModel, "", rawJSON, alt)
 }
 
-func (h *BaseAPIHandler) executeStreamWithResolvedProviders(ctx context.Context, providers []string, handlerType, normalizedModel string, rawJSON []byte, alt string) (<-chan []byte, http.Header, <-chan *interfaces.ErrorMessage) {
+func (h *BaseAPIHandler) executeStreamWithResolvedProviders(ctx context.Context, providers []string, handlerType, normalizedRouteModel, executionModelName string, rawJSON []byte, alt string) (<-chan []byte, http.Header, <-chan *interfaces.ErrorMessage) {
 	if h != nil && h.AuthManager != nil {
 		ctx = h.AuthManager.WithRequestRetryBudgetForProviders(ctx, providers, StreamingBootstrapRetries(h.Cfg))
 	}
 	reqMeta := requestExecutionMetadata(ctx)
-	reqMeta[coreexecutor.RequestedModelMetadataKey] = normalizedModel
+	reqMeta[coreexecutor.RequestedModelMetadataKey] = normalizedRouteModel
+	if normalizedExecutionModel := strings.TrimSpace(executionModelName); normalizedExecutionModel != "" && normalizedExecutionModel != normalizedRouteModel {
+		reqMeta[coreexecutor.ExecutionModelOverrideMetadataKey] = normalizedExecutionModel
+	}
 	payload := rawJSON
 	if len(payload) == 0 {
 		payload = nil
 	}
 	req := coreexecutor.Request{
-		Model:   normalizedModel,
+		Model:   normalizedRouteModel,
 		Payload: payload,
 	}
 	opts := coreexecutor.Options{
@@ -653,7 +671,7 @@ func (h *BaseAPIHandler) executeStreamWithResolvedProviders(ctx context.Context,
 	opts.Metadata = reqMeta
 	streamResult, err := h.AuthManager.ExecuteStream(ctx, providers, req, opts)
 	if err != nil {
-		err = enrichAuthSelectionError(err, providers, normalizedModel)
+		err = enrichAuthSelectionError(err, providers, normalizedRouteModel)
 		errChan := make(chan *interfaces.ErrorMessage, 1)
 		status := http.StatusInternalServerError
 		if se, ok := err.(interface{ StatusCode() int }); ok && se != nil {
@@ -763,7 +781,7 @@ func (h *BaseAPIHandler) executeStreamWithResolvedProviders(ctx context.Context,
 								chunks = retryResult.Chunks
 								continue outer
 							}
-							streamErr = enrichAuthSelectionError(retryErr, providers, normalizedModel)
+							streamErr = enrichAuthSelectionError(retryErr, providers, normalizedRouteModel)
 						}
 					}
 

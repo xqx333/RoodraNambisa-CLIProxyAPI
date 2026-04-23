@@ -57,6 +57,8 @@ type ImagesConfig struct {
 	CodexModel string `yaml:"codex-model,omitempty" json:"codex-model,omitempty"`
 	// ImageModel is the image_generation tool model exposed through the OpenAI Images API.
 	ImageModel string `yaml:"image-model,omitempty" json:"image-model,omitempty"`
+	// EnableFreePlanImageModel controls whether Codex free-plan auths register the configured image model.
+	EnableFreePlanImageModel bool `yaml:"enable-free-plan-image-model,omitempty" json:"enable-free-plan-image-model,omitempty"`
 	// EnableNAggregation enables multi-call aggregation for Images API n > 1 requests.
 	EnableNAggregation *bool `yaml:"enable-n-aggregation,omitempty" json:"enable-n-aggregation,omitempty"`
 	// UnsupportedStatusCode is used for unsupported Images API options.

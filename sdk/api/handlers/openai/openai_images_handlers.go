@@ -209,7 +209,8 @@ func (h *OpenAIImagesAPIHandler) Edits(c *gin.Context) {
 
 func (h *OpenAIImagesAPIHandler) handleImagesRequest(c *gin.Context, req openAIImageRequest, op imageOperation) {
 	codexModel := h.imagesCodexModel()
-	payload, err := buildCodexImageResponsesPayload(req, op, codexModel, h.imagesImageModel(), h.imagesOverrideInputFidelityEnabled())
+	imageModel := h.imagesImageModel()
+	payload, err := buildCodexImageResponsesPayload(req, op, codexModel, imageModel, h.imagesOverrideInputFidelityEnabled())
 	if err != nil {
 		h.writeImagesError(c, http.StatusBadRequest, err)
 		return
@@ -226,13 +227,13 @@ func (h *OpenAIImagesAPIHandler) handleImagesRequest(c *gin.Context, req openAII
 	}
 	responseFormat := strings.ToLower(strings.TrimSpace(req.ResponseFormat))
 	if req.Stream {
-		h.handleStreamingImagesResponse(c, rawJSON, codexModel, op, count, responseFormat)
+		h.handleStreamingImagesResponse(c, rawJSON, imageModel, codexModel, op, count, responseFormat)
 		return
 	}
-	h.handleNonStreamingImagesResponse(c, rawJSON, codexModel, count, responseFormat)
+	h.handleNonStreamingImagesResponse(c, rawJSON, imageModel, codexModel, count, responseFormat)
 }
 
-func (h *OpenAIImagesAPIHandler) handleNonStreamingImagesResponse(c *gin.Context, rawJSON []byte, codexModel string, count int, responseFormat string) {
+func (h *OpenAIImagesAPIHandler) handleNonStreamingImagesResponse(c *gin.Context, rawJSON []byte, imageModel, codexModel string, count int, responseFormat string) {
 	c.Header("Content-Type", "application/json")
 	var combined imagesResponse
 	var upstreamHeaders http.Header
@@ -242,7 +243,7 @@ func (h *OpenAIImagesAPIHandler) handleNonStreamingImagesResponse(c *gin.Context
 	for i := 0; i < count; i++ {
 		cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
 		stopKeepAlive := h.StartNonStreamingKeepAlive(c, cliCtx)
-		resp, headers, errMsg := h.ExecuteWithProviders(cliCtx, []string{Codex}, h.HandlerType(), codexModel, rawJSON, "")
+		resp, headers, errMsg := h.ExecuteWithProvidersAndExecutionModel(cliCtx, []string{Codex}, h.HandlerType(), imageModel, codexModel, rawJSON, "")
 		stopKeepAlive()
 		if errMsg != nil {
 			h.WriteErrorResponse(c, errMsg)
@@ -277,18 +278,18 @@ func (h *OpenAIImagesAPIHandler) handleNonStreamingImagesResponse(c *gin.Context
 	_, _ = c.Writer.Write(imagesPayload)
 }
 
-func (h *OpenAIImagesAPIHandler) handleStreamingImagesResponse(c *gin.Context, rawJSON []byte, codexModel string, op imageOperation, count int, responseFormat string) {
+func (h *OpenAIImagesAPIHandler) handleStreamingImagesResponse(c *gin.Context, rawJSON []byte, imageModel, codexModel string, op imageOperation, count int, responseFormat string) {
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		h.writeImagesError(c, http.StatusInternalServerError, errors.New("streaming not supported"))
 		return
 	}
 	if count > 1 {
-		h.handleMultiStreamingImagesResponse(c, flusher, rawJSON, codexModel, op, count, responseFormat)
+		h.handleMultiStreamingImagesResponse(c, flusher, rawJSON, imageModel, codexModel, op, count, responseFormat)
 		return
 	}
 	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
-	dataChan, upstreamHeaders, errChan := h.ExecuteStreamWithProviders(cliCtx, []string{Codex}, h.HandlerType(), codexModel, rawJSON, "")
+	dataChan, upstreamHeaders, errChan := h.ExecuteStreamWithProvidersAndExecutionModel(cliCtx, []string{Codex}, h.HandlerType(), imageModel, codexModel, rawJSON, "")
 
 	setSSEHeaders := func() {
 		c.Header("Content-Type", "text/event-stream")
@@ -344,14 +345,14 @@ func (h *OpenAIImagesAPIHandler) handleStreamingImagesResponse(c *gin.Context, r
 	}
 }
 
-func (h *OpenAIImagesAPIHandler) handleMultiStreamingImagesResponse(c *gin.Context, flusher http.Flusher, rawJSON []byte, codexModel string, op imageOperation, count int, responseFormat string) {
+func (h *OpenAIImagesAPIHandler) handleMultiStreamingImagesResponse(c *gin.Context, flusher http.Flusher, rawJSON []byte, imageModel, codexModel string, op imageOperation, count int, responseFormat string) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("Access-Control-Allow-Origin", "*")
 	for i := 0; i < count; i++ {
 		cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
-		dataChan, upstreamHeaders, errChan := h.ExecuteStreamWithProviders(cliCtx, []string{Codex}, h.HandlerType(), codexModel, rawJSON, "")
+		dataChan, upstreamHeaders, errChan := h.ExecuteStreamWithProvidersAndExecutionModel(cliCtx, []string{Codex}, h.HandlerType(), imageModel, codexModel, rawJSON, "")
 		if i == 0 {
 			handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
 		}

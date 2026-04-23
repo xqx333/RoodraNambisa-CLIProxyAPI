@@ -23,6 +23,8 @@ type imageCaptureExecutor struct {
 	calls        int
 	streamCalls  int
 	model        string
+	requested    string
+	override     string
 	payload      []byte
 	stream       bool
 	sourceFormat string
@@ -35,6 +37,8 @@ func (e *imageCaptureExecutor) Identifier() string { return "codex" }
 func (e *imageCaptureExecutor) Execute(ctx context.Context, auth *coreauth.Auth, req coreexecutor.Request, opts coreexecutor.Options) (coreexecutor.Response, error) {
 	e.calls++
 	e.model = req.Model
+	e.requested = strings.TrimSpace(stringValue(opts.Metadata[coreexecutor.RequestedModelMetadataKey]))
+	e.override = strings.TrimSpace(stringValue(opts.Metadata[coreexecutor.ExecutionModelOverrideMetadataKey]))
 	e.payload = append([]byte(nil), req.Payload...)
 	e.stream = opts.Stream
 	e.sourceFormat = opts.SourceFormat.String()
@@ -47,6 +51,8 @@ func (e *imageCaptureExecutor) Execute(ctx context.Context, auth *coreauth.Auth,
 func (e *imageCaptureExecutor) ExecuteStream(_ context.Context, _ *coreauth.Auth, req coreexecutor.Request, opts coreexecutor.Options) (*coreexecutor.StreamResult, error) {
 	e.streamCalls++
 	e.model = req.Model
+	e.requested = strings.TrimSpace(stringValue(opts.Metadata[coreexecutor.RequestedModelMetadataKey]))
+	e.override = strings.TrimSpace(stringValue(opts.Metadata[coreexecutor.ExecutionModelOverrideMetadataKey]))
 	e.payload = append([]byte(nil), req.Payload...)
 	e.stream = opts.Stream
 	e.sourceFormat = opts.SourceFormat.String()
@@ -70,7 +76,18 @@ func (e *imageCaptureExecutor) HttpRequest(context.Context, *coreauth.Auth, *htt
 	return nil, errors.New("not implemented")
 }
 
-func newImagesTestHandler(t *testing.T, executor *imageCaptureExecutor) *OpenAIImagesAPIHandler {
+func stringValue(raw any) string {
+	switch v := raw.(type) {
+	case string:
+		return v
+	case []byte:
+		return string(v)
+	default:
+		return ""
+	}
+}
+
+func newImagesTestHandler(t *testing.T, executor *imageCaptureExecutor, registeredModels ...string) *OpenAIImagesAPIHandler {
 	t.Helper()
 	manager := coreauth.NewManager(nil, nil, nil)
 	manager.RegisterExecutor(executor)
@@ -78,7 +95,18 @@ func newImagesTestHandler(t *testing.T, executor *imageCaptureExecutor) *OpenAII
 	if _, err := manager.Register(context.Background(), auth); err != nil {
 		t.Fatalf("Register auth: %v", err)
 	}
-	registry.GetGlobalRegistry().RegisterClient(auth.ID, auth.Provider, []*registry.ModelInfo{{ID: "gpt-5.4-mini"}})
+	if len(registeredModels) == 0 {
+		registeredModels = []string{"gpt-image-2", "gpt-5.4-mini"}
+	}
+	models := make([]*registry.ModelInfo, 0, len(registeredModels))
+	for _, modelID := range registeredModels {
+		modelID = strings.TrimSpace(modelID)
+		if modelID == "" {
+			continue
+		}
+		models = append(models, &registry.ModelInfo{ID: modelID})
+	}
+	registry.GetGlobalRegistry().RegisterClient(auth.ID, auth.Provider, models)
 	t.Cleanup(func() {
 		registry.GetGlobalRegistry().UnregisterClient(auth.ID)
 	})
@@ -108,6 +136,12 @@ func TestOpenAIImagesGenerationsNonStreamingUsesCodexImageTool(t *testing.T) {
 	}
 	if executor.model != "gpt-5.4-mini" {
 		t.Fatalf("executor model = %q, want gpt-5.4-mini", executor.model)
+	}
+	if executor.requested != "gpt-image-2" {
+		t.Fatalf("requested model = %q, want gpt-image-2", executor.requested)
+	}
+	if executor.override != "gpt-5.4-mini" {
+		t.Fatalf("execution override = %q, want gpt-5.4-mini", executor.override)
 	}
 	if executor.sourceFormat != "openai-response" {
 		t.Fatalf("source format = %q, want openai-response", executor.sourceFormat)
@@ -150,7 +184,7 @@ func TestOpenAIImagesGenerationsNonStreamingUsesCodexImageTool(t *testing.T) {
 func TestOpenAIImagesGenerationsUsesConfiguredImageModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	executor := &imageCaptureExecutor{}
-	h := newImagesTestHandler(t, executor)
+	h := newImagesTestHandler(t, executor, "gpt-image-custom", "gpt-5.4-mini")
 	h.Cfg.Images.ImageModel = "gpt-image-custom"
 	router := gin.New()
 	router.POST("/v1/images/generations", h.Generations)
@@ -169,6 +203,52 @@ func TestOpenAIImagesGenerationsUsesConfiguredImageModel(t *testing.T) {
 	models := h.Models()
 	if got := models[0]["id"]; got != "gpt-image-custom" {
 		t.Fatalf("model id = %v", got)
+	}
+}
+
+func TestOpenAIImagesGenerationsSelectsOnImageModelOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	executor := &imageCaptureExecutor{}
+	h := newImagesTestHandler(t, executor, "gpt-image-2")
+	router := gin.New()
+	router.POST("/v1/images/generations", h.Generations)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-2","prompt":"draw a cat"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	}
+	if executor.calls != 1 {
+		t.Fatalf("executor calls = %d, want 1", executor.calls)
+	}
+	if executor.model != "gpt-5.4-mini" {
+		t.Fatalf("executor model = %q, want gpt-5.4-mini", executor.model)
+	}
+}
+
+func TestOpenAIImagesGenerationsRejectsWhenImageModelIsNotRegistered(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	executor := &imageCaptureExecutor{}
+	h := newImagesTestHandler(t, executor, "gpt-5.4-mini")
+	router := gin.New()
+	router.POST("/v1/images/generations", h.Generations)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-2","prompt":"draw a cat"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code == http.StatusOK {
+		t.Fatalf("status = %d, want non-200 failure", resp.Code)
+	}
+	if executor.calls != 0 && executor.streamCalls != 0 {
+		t.Fatalf("executor calls = %d streamCalls = %d, want none", executor.calls, executor.streamCalls)
+	}
+	if !strings.Contains(resp.Body.String(), "gpt-image-2") {
+		t.Fatalf("expected model-unavailable error, body=%s", resp.Body.String())
 	}
 }
 
@@ -445,7 +525,7 @@ func TestOpenAIImagesEditsMultipartBuildsDataURLsAndMask(t *testing.T) {
 func TestOpenAIImagesEditsCanOverrideInputFidelity(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	executor := &imageCaptureExecutor{}
-	h := newImagesTestHandler(t, executor)
+	h := newImagesTestHandler(t, executor, "gpt-image-1.5", "gpt-5.4-mini")
 	overrideInputFidelity := true
 	h.Cfg.Images.OverrideInputFidelity = &overrideInputFidelity
 	h.Cfg.Images.ImageModel = "gpt-image-1.5"

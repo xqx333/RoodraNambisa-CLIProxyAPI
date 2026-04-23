@@ -184,6 +184,104 @@ func TestServiceHandleManagementAuthStatusChange_ReRegistersModelsForEnabledAuth
 	}
 }
 
+func TestServiceRefreshModelRegistrationForAuth_UpdatesCodexImageModelAfterConfigChange(t *testing.T) {
+	service := &Service{
+		cfg: &config.Config{
+			SDKConfig: config.SDKConfig{
+				Images: config.ImagesConfig{ImageModel: "gpt-image-2"},
+			},
+		},
+		coreManager: coreauth.NewManager(nil, nil, nil),
+	}
+
+	auth := &coreauth.Auth{
+		ID:       "service-codex-image-refresh-auth",
+		Provider: "codex",
+		Status:   coreauth.StatusActive,
+		Attributes: map[string]string{
+			"plan_type": "plus",
+		},
+	}
+	if _, errRegister := service.coreManager.Register(context.Background(), auth); errRegister != nil {
+		t.Fatalf("register auth: %v", errRegister)
+	}
+	reg := registry.GetGlobalRegistry()
+	reg.UnregisterClient(auth.ID)
+	t.Cleanup(func() {
+		reg.UnregisterClient(auth.ID)
+	})
+
+	service.registerModelsForAuth(auth)
+	if !containsRegisteredModel(reg.GetModelsForClient(auth.ID), "gpt-image-2") {
+		t.Fatalf("expected initial image model registration")
+	}
+
+	service.cfg = &config.Config{
+		SDKConfig: config.SDKConfig{
+			Images: config.ImagesConfig{ImageModel: "gpt-image-custom"},
+		},
+	}
+	if !service.refreshModelRegistrationForAuth(auth) {
+		t.Fatal("expected refreshModelRegistrationForAuth to succeed")
+	}
+
+	models := reg.GetModelsForClient(auth.ID)
+	if containsRegisteredModel(models, "gpt-image-2") {
+		t.Fatalf("expected old image model to be removed")
+	}
+	if !containsRegisteredModel(models, "gpt-image-custom") {
+		t.Fatalf("expected new image model to be registered")
+	}
+}
+
+func TestShouldRefreshCodexImageRegistrations(t *testing.T) {
+	testCases := []struct {
+		name     string
+		previous *config.Config
+		next     *config.Config
+		want     bool
+	}{
+		{
+			name: "image model unchanged and free toggle unchanged",
+			previous: &config.Config{SDKConfig: config.SDKConfig{
+				Images: config.ImagesConfig{ImageModel: "gpt-image-2", EnableFreePlanImageModel: false},
+			}},
+			next: &config.Config{SDKConfig: config.SDKConfig{
+				Images: config.ImagesConfig{ImageModel: "gpt-image-2", EnableFreePlanImageModel: false},
+			}},
+			want: false,
+		},
+		{
+			name: "image model changed",
+			previous: &config.Config{SDKConfig: config.SDKConfig{
+				Images: config.ImagesConfig{ImageModel: "gpt-image-2", EnableFreePlanImageModel: false},
+			}},
+			next: &config.Config{SDKConfig: config.SDKConfig{
+				Images: config.ImagesConfig{ImageModel: "gpt-image-custom", EnableFreePlanImageModel: false},
+			}},
+			want: true,
+		},
+		{
+			name: "free toggle changed",
+			previous: &config.Config{SDKConfig: config.SDKConfig{
+				Images: config.ImagesConfig{ImageModel: "gpt-image-2", EnableFreePlanImageModel: false},
+			}},
+			next: &config.Config{SDKConfig: config.SDKConfig{
+				Images: config.ImagesConfig{ImageModel: "gpt-image-2", EnableFreePlanImageModel: true},
+			}},
+			want: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldRefreshCodexImageRegistrations(tc.previous, tc.next); got != tc.want {
+				t.Fatalf("shouldRefreshCodexImageRegistrations() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestServiceDeleteCoreAuth_DeleteFailureKeepsRuntimeAndModels(t *testing.T) {
 	service := &Service{
 		cfg:         &config.Config{},
@@ -214,6 +312,15 @@ func TestServiceDeleteCoreAuth_DeleteFailureKeepsRuntimeAndModels(t *testing.T) 
 	if models := registry.GetGlobalRegistry().GetModelsForClient(auth.ID); len(models) == 0 {
 		t.Fatalf("expected models to remain registered after delete failure for %q", auth.ID)
 	}
+}
+
+func containsRegisteredModel(models []*registry.ModelInfo, modelID string) bool {
+	for _, model := range models {
+		if model != nil && strings.EqualFold(strings.TrimSpace(model.ID), modelID) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestServiceDeleteAuthMaintenanceCandidate_PersistsDelete(t *testing.T) {
