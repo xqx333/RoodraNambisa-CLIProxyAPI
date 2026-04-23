@@ -332,11 +332,14 @@ func TestOpenAIImagesOverrideOptionsAreSeparate(t *testing.T) {
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d, body=%s", resp.Code, http.StatusBadRequest, resp.Body.String())
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", resp.Code, http.StatusOK, resp.Body.String())
 	}
-	if executor.calls != 0 && executor.streamCalls != 0 {
-		t.Fatalf("executor calls = %d streamCalls = %d, want none", executor.calls, executor.streamCalls)
+	if executor.calls != 1 {
+		t.Fatalf("executor calls = %d, want 1", executor.calls)
+	}
+	if got := gjson.GetBytes(executor.payload, "tools.0.background").String(); got != "transparent" {
+		t.Fatalf("tool background = %q, want transparent", got)
 	}
 }
 

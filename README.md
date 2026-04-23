@@ -92,7 +92,7 @@ images:
 
 - `model` 默认支持 `gpt-image-2`；如需换成其他 Codex 支持的图片 tool 模型，修改 `images.image-model`，请求里的 `model` 也要使用同一个值。
 - `response_format=url` 默认不支持，请求传入 `url` 会直接返回错误。开启 `override-response-format-url` 后会自动按 `b64_json` 处理；开启 `response-format-url-data-url` 后会把图片 base64 包装成 `data:<mime>;base64,...` 放到 `url` 字段返回。
-- `background=transparent` 不支持，默认会直接返回错误。开启 `override-transparent-background` 后会自动改成 `auto` 再转发给 Codex。
+- `background=transparent` 默认保持上游兼容行为，会原样透传给 Codex；开启 `override-transparent-background` 后会自动改成 `auto` 再转发给 Codex。
 - `input_fidelity` 默认保持上游兼容行为，会原样透传给 Codex；实测 `gpt-image-2` 会返回 `invalid_input_fidelity_model`。开启 `override-input-fidelity` 后，所有图片请求都会自动不透传该字段。
 - `edits` 支持 multipart 的 `image` / `image[]` / `mask`，也支持 JSON 的 `images[].image_url`。
 - 暂不支持 JSON `file_id`，因为当前项目没有 OpenAI Files API 兼容层。

@@ -221,7 +221,7 @@ func (h *OpenAIImagesAPIHandler) handleImagesRequest(c *gin.Context, req openAII
 	}
 	count := imageRequestCount(req)
 	if count > 1 && !h.imagesNAggregationEnabled() {
-		h.writeImagesRequestError(c, unsupportedImageErrorf("n > 1 is not supported when images.enable-n-aggregation is false"))
+		h.writeImagesRequestError(c, unsupportedImageErrorf("n > 1 is not supported"))
 		return
 	}
 	responseFormat := strings.ToLower(strings.TrimSpace(req.ResponseFormat))
@@ -548,10 +548,7 @@ func (h *OpenAIImagesAPIHandler) validateImageRequest(req *openAIImageRequest, o
 	if rf := strings.TrimSpace(req.ResponseFormat); rf != "" && rf != "b64_json" && rf != "url" {
 		return unsupportedImageErrorf("unsupported response_format %q", rf)
 	}
-	if strings.EqualFold(strings.TrimSpace(req.Background), "transparent") {
-		if !h.imagesOverrideTransparentBackgroundEnabled() {
-			return unsupportedImageErrorf("background=transparent is not supported for %s", imageModel)
-		}
+	if strings.EqualFold(strings.TrimSpace(req.Background), "transparent") && h.imagesOverrideTransparentBackgroundEnabled() {
 		req.Background = "auto"
 	}
 	n := 1
