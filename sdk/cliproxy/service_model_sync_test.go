@@ -234,7 +234,7 @@ func TestServiceRefreshModelRegistrationForAuth_UpdatesCodexImageModelAfterConfi
 	}
 }
 
-func TestShouldRefreshCodexImageRegistrations(t *testing.T) {
+func TestShouldRefreshCodexRegistrations(t *testing.T) {
 	testCases := []struct {
 		name     string
 		previous *config.Config
@@ -271,12 +271,40 @@ func TestShouldRefreshCodexImageRegistrations(t *testing.T) {
 			}},
 			want: true,
 		},
+		{
+			name: "custom models changed",
+			previous: &config.Config{
+				CodexCustomModels: []config.CodexCustomModel{
+					{ID: "gpt-5.5-codex", DisplayName: "GPT 5.5 Codex", Groups: []string{"plus"}},
+				},
+			},
+			next: &config.Config{
+				CodexCustomModels: []config.CodexCustomModel{
+					{ID: "gpt-5.5-codex", DisplayName: "GPT 5.5 Codex", Groups: []string{"plus", "pro"}},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "custom models unchanged",
+			previous: &config.Config{
+				CodexCustomModels: []config.CodexCustomModel{
+					{ID: "gpt-5.5-codex", DisplayName: "GPT 5.5 Codex", Groups: []string{"plus", "pro"}},
+				},
+			},
+			next: &config.Config{
+				CodexCustomModels: []config.CodexCustomModel{
+					{ID: "gpt-5.5-codex", DisplayName: "GPT 5.5 Codex", Groups: []string{"plus", "pro"}},
+				},
+			},
+			want: false,
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := shouldRefreshCodexImageRegistrations(tc.previous, tc.next); got != tc.want {
-				t.Fatalf("shouldRefreshCodexImageRegistrations() = %v, want %v", got, tc.want)
+			if got := shouldRefreshCodexRegistrations(tc.previous, tc.next); got != tc.want {
+				t.Fatalf("shouldRefreshCodexRegistrations() = %v, want %v", got, tc.want)
 			}
 		})
 	}

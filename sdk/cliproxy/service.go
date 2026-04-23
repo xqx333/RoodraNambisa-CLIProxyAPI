@@ -2280,7 +2280,7 @@ func (s *Service) Run(ctx context.Context) error {
 			s.coreManager.SetOAuthModelAlias(newCfg.OAuthModelAlias)
 		}
 		s.rebindExecutors()
-		if s.coreManager != nil && shouldRefreshCodexImageRegistrations(previousCfgSnapshot, newCfg) {
+		if s.coreManager != nil && shouldRefreshCodexRegistrations(previousCfgSnapshot, newCfg) {
 			for _, auth := range s.coreManager.List() {
 				if auth == nil || !strings.EqualFold(strings.TrimSpace(auth.Provider), "codex") {
 					continue
@@ -2520,6 +2520,10 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 			if authKind == "apikey" {
 				excluded = entry.ExcludedModels
 			}
+		}
+		if authKind != "apikey" {
+			models = removeCodexCustomModelOverrides(models, s.cfg)
+			models = upsertModelInfos(models, codexCustomModelInfosForPlan(s.cfg, codexPlanType))
 		}
 		allowImageModel := codexPlanAllowsImageModel(codexPlanType)
 		if strings.EqualFold(codexPlanType, "free") && freePlanImageModelEnabled(s.cfg) {
@@ -2872,11 +2876,14 @@ func configuredImagesImageModel(cfg *config.Config) string {
 	return modelID
 }
 
-func shouldRefreshCodexImageRegistrations(previousCfg, nextCfg *config.Config) bool {
+func shouldRefreshCodexRegistrations(previousCfg, nextCfg *config.Config) bool {
 	if configuredImagesImageModel(previousCfg) != configuredImagesImageModel(nextCfg) {
 		return true
 	}
-	return freePlanImageModelEnabled(previousCfg) != freePlanImageModelEnabled(nextCfg)
+	if freePlanImageModelEnabled(previousCfg) != freePlanImageModelEnabled(nextCfg) {
+		return true
+	}
+	return codexCustomModelsSignature(previousCfg) != codexCustomModelsSignature(nextCfg)
 }
 
 func freePlanImageModelEnabled(cfg *config.Config) bool {
@@ -2900,6 +2907,119 @@ func codexDynamicImageModelInfo(cfg *config.Config) *ModelInfo {
 		DisplayName: modelID,
 		Version:     modelID,
 	}
+}
+
+func codexCustomModelInfosForPlan(cfg *config.Config, planType string) []*ModelInfo {
+	if cfg == nil || len(cfg.CodexCustomModels) == 0 {
+		return nil
+	}
+	planType = strings.ToLower(strings.TrimSpace(planType))
+	out := make([]*ModelInfo, 0, len(cfg.CodexCustomModels))
+	for i := range cfg.CodexCustomModels {
+		entry := cfg.CodexCustomModels[i]
+		if !codexCustomModelAllowsPlan(entry, planType) {
+			continue
+		}
+		info := codexCustomModelInfo(entry)
+		if info != nil {
+			out = append(out, info)
+		}
+	}
+	return out
+}
+
+func removeCodexCustomModelOverrides(models []*ModelInfo, cfg *config.Config) []*ModelInfo {
+	if len(models) == 0 || cfg == nil || len(cfg.CodexCustomModels) == 0 {
+		return models
+	}
+	overrides := make(map[string]struct{}, len(cfg.CodexCustomModels))
+	for _, entry := range cfg.CodexCustomModels {
+		id := strings.ToLower(strings.TrimSpace(entry.ID))
+		if id != "" {
+			overrides[id] = struct{}{}
+		}
+	}
+	if len(overrides) == 0 {
+		return models
+	}
+	out := make([]*ModelInfo, 0, len(models))
+	for _, model := range models {
+		if model == nil {
+			continue
+		}
+		id := strings.ToLower(strings.TrimSpace(model.ID))
+		if _, overridden := overrides[id]; overridden {
+			continue
+		}
+		out = append(out, model)
+	}
+	return out
+}
+
+func codexCustomModelAllowsPlan(entry config.CodexCustomModel, planType string) bool {
+	planType = strings.ToLower(strings.TrimSpace(planType))
+	for _, group := range entry.Groups {
+		if strings.EqualFold(strings.TrimSpace(group), planType) {
+			return true
+		}
+	}
+	return false
+}
+
+func codexCustomModelInfo(entry config.CodexCustomModel) *ModelInfo {
+	modelID := strings.TrimSpace(entry.ID)
+	if modelID == "" {
+		return nil
+	}
+	displayName := strings.TrimSpace(entry.DisplayName)
+	if displayName == "" {
+		displayName = modelID
+	}
+	return &ModelInfo{
+		ID:                  modelID,
+		Object:              "model",
+		Created:             1704067200, // 2024-01-01
+		OwnedBy:             "openai",
+		Type:                "openai",
+		DisplayName:         displayName,
+		Version:             modelID,
+		SupportedParameters: []string{"tools"},
+		Thinking:            &registry.ThinkingSupport{Levels: []string{"low", "medium", "high", "xhigh"}},
+	}
+}
+
+func codexCustomModelsSignature(cfg *config.Config) string {
+	if cfg == nil || len(cfg.CodexCustomModels) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, entry := range cfg.CodexCustomModels {
+		id := strings.TrimSpace(entry.ID)
+		if id == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteByte('|')
+		}
+		b.WriteString(strings.ToLower(id))
+		b.WriteByte(':')
+		b.WriteString(strings.TrimSpace(entry.DisplayName))
+		b.WriteByte(':')
+		for i, group := range entry.Groups {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			b.WriteString(strings.ToLower(strings.TrimSpace(group)))
+		}
+	}
+	return b.String()
+}
+
+func upsertModelInfos(models []*ModelInfo, extras []*ModelInfo) []*ModelInfo {
+	for _, extra := range extras {
+		models = upsertModelInfo(models, extra)
+	}
+	return models
 }
 
 func upsertModelInfo(models []*ModelInfo, extra *ModelInfo) []*ModelInfo {

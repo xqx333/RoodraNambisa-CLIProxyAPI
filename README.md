@@ -119,6 +119,23 @@ curl http://127.0.0.1:8317/v1/images/generations \
   }'
 ```
 
+## Codex 自定义模型
+
+如果 Codex 上游新增模型但远程模型列表还没更新，可以用 `codex-custom-models` 临时追加到 OAuth / 文件凭证的可用模型里，并按账号计划类型控制可见范围：
+
+```yaml
+codex-custom-models:
+  - id: "gpt-5.5-codex"
+    display-name: "GPT 5.5 Codex"
+    groups: ["plus", "pro", "team", "business", "go"]
+```
+
+说明：
+
+- `groups` 支持 `free`、`plus`、`pro`、`team`、`business`、`go`。
+- 该配置只作用于 Codex OAuth / 文件凭证；`codex-api-key` 继续使用自身的 `models` 配置。
+- 如果需要给客户端暴露别名，继续使用 `oauth-model-alias.codex`。
+
 ## 新手入门
 
 CLIProxyAPI 用户手册：[https://help.router-for.me/cn/](https://help.router-for.me/cn/)

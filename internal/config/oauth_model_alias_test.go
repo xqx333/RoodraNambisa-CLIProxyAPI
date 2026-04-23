@@ -54,3 +54,49 @@ func TestSanitizeOAuthModelAlias_AllowsMultipleAliasesForSameName(t *testing.T) 
 		}
 	}
 }
+
+func TestSanitizeCodexCustomModels(t *testing.T) {
+	cfg := &Config{
+		CodexCustomModels: []CodexCustomModel{
+			{ID: " ", DisplayName: "missing id", Groups: []string{"plus"}},
+			{ID: "gpt-empty-groups", Groups: []string{"unknown"}},
+			{ID: " gpt-5.5-codex ", DisplayName: " GPT 5.5 Codex ", Groups: []string{" Pro ", "plus", "PLUS", "unknown"}},
+			{ID: "GPT-5.5-CODEX", DisplayName: "ignored duplicate", Groups: []string{"team", "go"}},
+			{ID: "gpt-5.5-mini-codex", Groups: []string{"business", "free"}},
+		},
+	}
+
+	cfg.SanitizeCodexCustomModels()
+
+	if len(cfg.CodexCustomModels) != 2 {
+		t.Fatalf("expected 2 sanitized custom models, got %d", len(cfg.CodexCustomModels))
+	}
+
+	first := cfg.CodexCustomModels[0]
+	if first.ID != "gpt-5.5-codex" || first.DisplayName != "GPT 5.5 Codex" {
+		t.Fatalf("unexpected first custom model: %+v", first)
+	}
+	expectedFirstGroups := []string{"plus", "pro", "team", "go"}
+	if len(first.Groups) != len(expectedFirstGroups) {
+		t.Fatalf("first groups = %v, want %v", first.Groups, expectedFirstGroups)
+	}
+	for i, group := range expectedFirstGroups {
+		if first.Groups[i] != group {
+			t.Fatalf("first groups = %v, want %v", first.Groups, expectedFirstGroups)
+		}
+	}
+
+	second := cfg.CodexCustomModels[1]
+	if second.ID != "gpt-5.5-mini-codex" || second.DisplayName != "gpt-5.5-mini-codex" {
+		t.Fatalf("unexpected second custom model: %+v", second)
+	}
+	expectedSecondGroups := []string{"free", "business"}
+	if len(second.Groups) != len(expectedSecondGroups) {
+		t.Fatalf("second groups = %v, want %v", second.Groups, expectedSecondGroups)
+	}
+	for i, group := range expectedSecondGroups {
+		if second.Groups[i] != group {
+			t.Fatalf("second groups = %v, want %v", second.Groups, expectedSecondGroups)
+		}
+	}
+}

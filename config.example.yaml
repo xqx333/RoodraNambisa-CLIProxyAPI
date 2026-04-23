@@ -373,6 +373,14 @@ nonstream-keepalive-interval: 0
 #     - name: "kimi-k2.5"
 #       alias: "k2.5"
 
+# Additional Codex OAuth/file-backed models by plan group.
+# This does not apply to codex-api-key entries; use codex-api-key.models for those.
+# Supported groups: free, plus, pro, team, business, go.
+# codex-custom-models:
+#   - id: "gpt-5.5-codex"
+#     display-name: "GPT 5.5 Codex"
+#     groups: ["plus", "pro", "team", "business", "go"]
+
 # OAuth provider excluded models
 # oauth-excluded-models:
 #   gemini-cli:

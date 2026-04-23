@@ -114,6 +114,9 @@ type Config struct {
 	// These are used only when the client does not send its own headers.
 	CodexHeaderDefaults CodexHeaderDefaults `yaml:"codex-header-defaults" json:"codex-header-defaults"`
 
+	// CodexCustomModels defines additional Codex OAuth/file-backed models.
+	CodexCustomModels []CodexCustomModel `yaml:"codex-custom-models,omitempty" json:"codex-custom-models,omitempty"`
+
 	// ClaudeKey defines a list of Claude API key configurations as specified in the YAML configuration file.
 	ClaudeKey []ClaudeKey `yaml:"claude-api-key" json:"claude-api-key"`
 
@@ -273,6 +276,13 @@ type OAuthModelAlias struct {
 	Name  string `yaml:"name" json:"name"`
 	Alias string `yaml:"alias" json:"alias"`
 	Fork  bool   `yaml:"fork,omitempty" json:"fork,omitempty"`
+}
+
+// CodexCustomModel defines a client-visible Codex OAuth model and the plan groups that may use it.
+type CodexCustomModel struct {
+	ID          string   `yaml:"id" json:"id"`
+	DisplayName string   `yaml:"display-name,omitempty" json:"display-name,omitempty"`
+	Groups      []string `yaml:"groups" json:"groups"`
 }
 
 // AmpModelMapping defines a model name mapping for Amp CLI requests.
@@ -737,6 +747,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	// Sanitize Codex header defaults.
 	cfg.SanitizeCodexHeaderDefaults()
 
+	// Sanitize Codex custom OAuth models.
+	cfg.SanitizeCodexCustomModels()
+
 	// Sanitize Claude header defaults.
 	cfg.SanitizeClaudeHeaderDefaults()
 
@@ -839,6 +852,44 @@ func (cfg *Config) SanitizeCodexHeaderDefaults() {
 	cfg.CodexHeaderDefaults.BetaFeatures = strings.TrimSpace(cfg.CodexHeaderDefaults.BetaFeatures)
 }
 
+// SanitizeCodexCustomModels normalizes user-defined Codex OAuth model entries.
+func (cfg *Config) SanitizeCodexCustomModels() {
+	if cfg == nil || len(cfg.CodexCustomModels) == 0 {
+		return
+	}
+	out := make([]CodexCustomModel, 0, len(cfg.CodexCustomModels))
+	byID := make(map[string]int, len(cfg.CodexCustomModels))
+	for _, entry := range cfg.CodexCustomModels {
+		id := strings.TrimSpace(entry.ID)
+		groups := normalizeCodexCustomModelGroups(entry.Groups)
+		if id == "" || len(groups) == 0 {
+			continue
+		}
+		displayName := strings.TrimSpace(entry.DisplayName)
+		if displayName == "" {
+			displayName = id
+		}
+		key := strings.ToLower(id)
+		if idx, ok := byID[key]; ok {
+			out[idx].Groups = mergeCodexCustomModelGroups(out[idx].Groups, groups)
+			if out[idx].DisplayName == out[idx].ID && displayName != id {
+				out[idx].DisplayName = displayName
+			}
+			continue
+		}
+		byID[key] = len(out)
+		out = append(out, CodexCustomModel{
+			ID:          id,
+			DisplayName: displayName,
+			Groups:      groups,
+		})
+	}
+	cfg.CodexCustomModels = out
+	if len(cfg.CodexCustomModels) == 0 {
+		cfg.CodexCustomModels = nil
+	}
+}
+
 // SanitizeClaudeHeaderDefaults trims surrounding whitespace from the
 // configured Claude fingerprint baseline values.
 func (cfg *Config) SanitizeClaudeHeaderDefaults() {
@@ -889,6 +940,47 @@ func (cfg *Config) SanitizeOAuthModelAlias() {
 		}
 	}
 	cfg.OAuthModelAlias = out
+}
+
+func normalizeCodexCustomModelGroups(groups []string) []string {
+	if len(groups) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(groups))
+	for _, raw := range groups {
+		group := strings.ToLower(strings.TrimSpace(raw))
+		if !isCodexCustomModelGroup(group) {
+			continue
+		}
+		seen[group] = struct{}{}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	ordered := []string{"free", "plus", "pro", "team", "business", "go"}
+	out := make([]string, 0, len(seen))
+	for _, group := range ordered {
+		if _, ok := seen[group]; ok {
+			out = append(out, group)
+		}
+	}
+	return out
+}
+
+func mergeCodexCustomModelGroups(a, b []string) []string {
+	merged := make([]string, 0, len(a)+len(b))
+	merged = append(merged, a...)
+	merged = append(merged, b...)
+	return normalizeCodexCustomModelGroups(merged)
+}
+
+func isCodexCustomModelGroup(group string) bool {
+	switch group {
+	case "free", "plus", "pro", "team", "business", "go":
+		return true
+	default:
+		return false
+	}
 }
 
 // SanitizeOpenAICompatibility removes OpenAI-compatibility provider entries that are
