@@ -410,6 +410,16 @@ func antigravityCreditsDisabled(auth *cliproxyauth.Auth, now time.Time) bool {
 	return false
 }
 
+func antigravityShouldUseCreditsDirect(cfg *config.Config, auth *cliproxyauth.Auth, modelName string, requested bool, now time.Time) bool {
+	if !antigravityCreditsRetryEnabled(cfg) {
+		return false
+	}
+	if antigravityCreditsDisabled(auth, now) {
+		return false
+	}
+	return requested || antigravityShouldPreferCredits(auth, modelName, now)
+}
+
 func recordAntigravityCreditsFailure(auth *cliproxyauth.Auth, now time.Time) {
 	authID, state, ok := antigravityCreditsFailureStateForAuth(auth)
 	if !ok {
@@ -735,7 +745,7 @@ attemptLoop:
 		for idx, baseURL := range baseURLs {
 			requestPayload := translated
 			usedCreditsDirect := false
-			if antigravityCreditsRetryEnabled(e.cfg) && (useCredits || antigravityShouldPreferCredits(auth, baseModel, time.Now())) {
+			if antigravityShouldUseCreditsDirect(e.cfg, auth, baseModel, useCredits, time.Now()) {
 				if creditsPayload := injectEnabledCreditTypes(translated); len(creditsPayload) > 0 {
 					requestPayload = creditsPayload
 					usedCreditsDirect = true
@@ -951,7 +961,7 @@ attemptLoop:
 		for idx, baseURL := range baseURLs {
 			requestPayload := translated
 			usedCreditsDirect := false
-			if antigravityCreditsRetryEnabled(e.cfg) && (useCredits || antigravityShouldPreferCredits(auth, baseModel, time.Now())) {
+			if antigravityShouldUseCreditsDirect(e.cfg, auth, baseModel, useCredits, time.Now()) {
 				if creditsPayload := injectEnabledCreditTypes(translated); len(creditsPayload) > 0 {
 					requestPayload = creditsPayload
 					usedCreditsDirect = true
@@ -1417,7 +1427,7 @@ attemptLoop:
 		for idx, baseURL := range baseURLs {
 			requestPayload := translated
 			usedCreditsDirect := false
-			if antigravityCreditsRetryEnabled(e.cfg) && (useCredits || antigravityShouldPreferCredits(auth, baseModel, time.Now())) {
+			if antigravityShouldUseCreditsDirect(e.cfg, auth, baseModel, useCredits, time.Now()) {
 				if creditsPayload := injectEnabledCreditTypes(translated); len(creditsPayload) > 0 {
 					requestPayload = creditsPayload
 					usedCreditsDirect = true
