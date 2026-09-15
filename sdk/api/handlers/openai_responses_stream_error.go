@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
 
 type openAIResponsesStreamErrorChunk struct {
@@ -19,11 +21,11 @@ func openAIResponsesStreamErrorCode(status int) string {
 	case http.StatusUnauthorized:
 		return "invalid_api_key"
 	case http.StatusForbidden:
-		return "insufficient_quota"
+		return "permission_denied"
 	case http.StatusTooManyRequests:
 		return "rate_limit_exceeded"
 	case http.StatusNotFound:
-		return "model_not_found"
+		return "not_found"
 	case http.StatusRequestTimeout:
 		return "request_timeout"
 	default:
@@ -56,6 +58,9 @@ func BuildOpenAIResponsesStreamErrorChunk(status int, errText string, sequenceNu
 	}
 
 	code := openAIResponsesStreamErrorCode(status)
+	if status == http.StatusNotFound && coreauth.IsModelNotFoundError(&coreauth.Error{HTTPStatus: status, Message: errText}) {
+		code = "model_not_found"
+	}
 
 	trimmed := strings.TrimSpace(errText)
 	if trimmed != "" && json.Valid([]byte(trimmed)) {

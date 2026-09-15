@@ -353,6 +353,7 @@ func (e *ChatGPTWebExecutor) executeRuntime(ctx context.Context, auth *cliproxya
 	if prepared.request.Image != nil {
 		completed, headers, errImage := e.executeChatGPTWebImage(ctx, client, credential, prepared)
 		if errImage != nil {
+			e.scheduleChatGPTWebLibraryCleanup(ctx, auth, prepared, errImage)
 			return resp, e.handleChatGPTWebImageRequestError(auth.ID, errImage)
 		}
 		publishChatGPTWebTerminalUsage(ctx, reporter, prepared, completed)
@@ -460,6 +461,7 @@ func (e *ChatGPTWebExecutor) executeRuntimeStream(ctx context.Context, auth *cli
 		imageStreamPassthrough := metadataBool(opts.Metadata, cliproxyexecutor.ImageGenerationStreamPassthroughMetadataKey)
 		execution, errImage := e.beginChatGPTWebImage(ctx, client, credential, prepared)
 		if errImage != nil {
+			e.scheduleChatGPTWebLibraryCleanup(ctx, auth, prepared, errImage)
 			releaseImageWork()
 			prepared.discardUsageProjection()
 			e.finishChatGPTWebRuntimeClient(ctx, auth, credential, client)
@@ -717,6 +719,7 @@ func (e *ChatGPTWebExecutor) prepareRuntimeRequestTemplate(ctx context.Context, 
 		resolvedImageConfig = cfg.Images.ChatGPTWeb.Resolved()
 	}
 	imageConfigSnapshot := cliproxyexecutor.ChatGPTWebImageConfigSnapshot{
+		AutoCleanupLibraryOnFull:     resolvedImageConfig.AutoCleanupLibraryOnFull,
 		RemoteImageURLEnabled:        resolvedImageConfig.RemoteImageURLEnabled,
 		RemoteImageURLDownloadMode:   resolvedImageConfig.RemoteImageURLDownloadMode,
 		NormalizeMismatchedImageMIME: resolvedImageConfig.NormalizeMismatchedImageMIME,
@@ -2604,6 +2607,8 @@ type chatGPTWebHTTPError struct {
 	lifecycleError             *chatgptwebauth.AuthError
 	turnstileFinalizeRejection bool
 	sentinelFinalizeRejection  bool
+	libraryStorageRejected     bool
+	libraryUploadBytes         int64
 	diagnostic                 *cliproxyauth.ErrorDiagnostic
 }
 
@@ -2691,6 +2696,7 @@ func newChatGPTWebStatusError(code int, path string, body []byte, headers fhttp.
 		turnstileFinalizeRejection: turnstileFinalizeRejection,
 		sentinelFinalizeRejection:  sentinelFinalizeRejection,
 		diagnostic:                 helps.ClassifyChatGPTWebHTTPDiagnostic(code, path, body, headers),
+		libraryStorageRejected:     (path == "/backend-api/files" || path == "/backend-api/files/process_upload_stream" || strings.HasSuffix(path, "/uploaded")) && chatgptwebauth.LibraryStorageRejection(body),
 	}
 	switch code {
 	case http.StatusBadRequest, http.StatusNotFound, http.StatusMethodNotAllowed,

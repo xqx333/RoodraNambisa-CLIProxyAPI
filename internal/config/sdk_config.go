@@ -231,6 +231,8 @@ type ChatGPTWebImageConfig struct {
 	NormalizeRemoteImageMIME *bool `yaml:"normalize-remote-image-mime,omitempty" json:"normalize-remote-image-mime,omitempty"`
 	// SanitizeErrorResponses removes provider and internal implementation details from public image errors.
 	SanitizeErrorResponses bool `yaml:"sanitize-error-responses,omitempty" json:"sanitize-error-responses,omitempty"`
+	// AutoCleanupLibraryOnFull schedules account maintenance only after a storage rejection and capacity recheck.
+	AutoCleanupLibraryOnFull bool `yaml:"auto-cleanup-library-on-full,omitempty" json:"auto-cleanup-library-on-full,omitempty"`
 	// AdaptSizeToAspectRatio maps compatible explicit image sizes to an upstream canvas prompt.
 	AdaptSizeToAspectRatio bool `yaml:"adapt-size-to-aspect-ratio,omitempty" json:"adapt-size-to-aspect-ratio,omitempty"`
 	// StrictSize excludes ChatGPT Web when an explicit image size cannot be adapted.
@@ -369,6 +371,7 @@ type ResolvedChatGPTWebImageConfig struct {
 	NormalizeMismatchedImageMIME bool
 	NormalizeRemoteImageMIME     bool
 	SanitizeErrorResponses       bool
+	AutoCleanupLibraryOnFull     bool
 	AdaptSizeToAspectRatio       bool
 	StrictSize                   bool
 	AspectRatioMaxErrorPercent   float64
@@ -407,6 +410,7 @@ func (cfg ChatGPTWebImageConfig) Resolved() ResolvedChatGPTWebImageConfig {
 		NormalizeMismatchedImageMIME: cfg.NormalizeMismatchedImageMIME,
 		NormalizeRemoteImageMIME:     true,
 		SanitizeErrorResponses:       cfg.SanitizeErrorResponses,
+		AutoCleanupLibraryOnFull:     cfg.AutoCleanupLibraryOnFull,
 		AdaptSizeToAspectRatio:       cfg.AdaptSizeToAspectRatio,
 		StrictSize:                   cfg.StrictSize,
 		AspectRatioMaxErrorPercent:   DefaultChatGPTWebAspectRatioMaxErrorPercent,

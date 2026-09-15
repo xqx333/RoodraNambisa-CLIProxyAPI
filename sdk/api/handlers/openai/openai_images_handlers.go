@@ -2831,6 +2831,7 @@ func (h *OpenAIImagesAPIHandler) chatGPTWebImageConfigSnapshot() coreexecutor.Ch
 		resolved = h.Cfg.Images.ChatGPTWeb.Resolved()
 	}
 	return coreexecutor.ChatGPTWebImageConfigSnapshot{
+		AutoCleanupLibraryOnFull:     resolved.AutoCleanupLibraryOnFull,
 		RemoteImageURLEnabled:        resolved.RemoteImageURLEnabled,
 		RemoteImageURLDownloadMode:   resolved.RemoteImageURLDownloadMode,
 		NormalizeMismatchedImageMIME: resolved.NormalizeMismatchedImageMIME,

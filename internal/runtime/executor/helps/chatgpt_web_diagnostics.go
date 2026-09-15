@@ -135,6 +135,8 @@ func ChatGPTWebDiagnosticStage(path string) string {
 		return "sentinel_sdk"
 	case strings.HasSuffix(path, "/backend-api/files"):
 		return "file_sign"
+	case strings.HasSuffix(path, "/backend-api/files/process_upload_stream"):
+		return "file_confirm"
 	case strings.Contains(path, "/backend-api/files/") && strings.HasSuffix(path, "/uploaded"):
 		return "file_confirm"
 	case strings.Contains(path, "/backend-api/files/") && strings.HasSuffix(path, "/download"):

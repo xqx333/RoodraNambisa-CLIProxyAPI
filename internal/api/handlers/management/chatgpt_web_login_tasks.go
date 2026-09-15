@@ -1485,6 +1485,24 @@ func safeChatGPTWebErrorCategory(value string) string {
 
 func safeChatGPTWebErrorMessage(category string) string {
 	switch category {
+	case "not_found":
+		return "upstream resource was not found"
+	case "permission_denied":
+		return "upstream permission was denied"
+	case "access_restricted":
+		return "upstream access is restricted"
+	case "upstream_error":
+		return "upstream service failed"
+	case "request_rejected":
+		return "upstream request was rejected"
+	case "request_failed":
+		return "request failed"
+	case "network_timeout":
+		return "network request timed out"
+	case "request_canceled":
+		return "request was canceled"
+	case "dns_error", "tls_error", "proxy_error", "network_error":
+		return "network request failed"
 	case "account_deleted":
 		return "account is deleted"
 	case "account_deactivated":

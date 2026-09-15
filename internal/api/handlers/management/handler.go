@@ -104,6 +104,7 @@ type Handler struct {
 	runtimeConfigApplier    func(context.Context, *config.Config) (config.RuntimeApplyResult, error)
 	chatGPTWebTasks         *chatGPTWebLoginTaskManager
 	chatGPTWebMutationTasks *chatGPTWebMutationTaskManager
+	libraryCleanupTasks     *libraryCleanupTaskManager
 	agentIdentityTasks      *codexAgentIdentityTaskManager
 	agentIdentityBaseURL    string
 	configMutationMu        managementContextMutex
@@ -302,9 +303,10 @@ func (h *Handler) Shutdown(ctx context.Context) error {
 	mutationTaskManager := h.chatGPTWebMutationTasks
 	agentIdentityTasks := h.agentIdentityTasks
 	usagePruneTasks := h.usagePruneTasks
+	libraryCleanupTasks := h.libraryCleanupTasks
 	h.mu.Unlock()
 	type shutdownResult struct{ err error }
-	results := make(chan shutdownResult, 4)
+	results := make(chan shutdownResult, 5)
 	count := 0
 	if taskManager != nil {
 		count++
@@ -321,6 +323,10 @@ func (h *Handler) Shutdown(ctx context.Context) error {
 	if usagePruneTasks != nil {
 		count++
 		go func() { results <- shutdownResult{err: usagePruneTasks.shutdown(ctx)} }()
+	}
+	if libraryCleanupTasks != nil {
+		count++
+		go func() { results <- shutdownResult{err: libraryCleanupTasks.Shutdown(ctx)} }()
 	}
 	var shutdownErr error
 	for range count {
@@ -407,6 +413,9 @@ func (h *Handler) SetAuthManager(manager *coreauth.Manager) {
 		return
 	}
 	h.mu.Lock()
+	if h.authManager != manager {
+		h.libraryCleanupTasks = nil
+	}
 	h.authManager = manager
 	h.mu.Unlock()
 }

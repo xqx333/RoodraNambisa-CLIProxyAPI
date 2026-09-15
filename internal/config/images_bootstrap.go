@@ -21,6 +21,11 @@ func (cfg *ChatGPTWebImageConfig) UnmarshalYAML(node *yaml.Node) error {
 	if err := node.Decode(&fields); err != nil {
 		return err
 	}
+	if value, present := fields["auto-cleanup-library-on-full"]; present {
+		if _, ok := value.(bool); !ok {
+			return fmt.Errorf("images.chatgpt-web.auto-cleanup-library-on-full must be a boolean")
+		}
+	}
 	for _, key := range []string{"bootstrap-timeout-seconds", "bootstrap-retries"} {
 		if value, present := fields[key]; present {
 			switch value.(type) {

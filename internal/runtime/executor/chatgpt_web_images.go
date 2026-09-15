@@ -1794,14 +1794,18 @@ func (e *ChatGPTWebExecutor) uploadChatGPTWebImage(ctx context.Context, client *
 	}
 	path := "/backend-api/files"
 	_, metadataData, err := e.doChatGPTWebJSON(ctx, client, credential, path, map[string]any{
-		"file_name": fileName,
-		"file_size": len(data),
-		"use_case":  "multimodal",
-		"width":     config.Width,
-		"height":    config.Height,
+		"file_name":                 fileName,
+		"file_size":                 len(data),
+		"use_case":                  "multimodal",
+		"width":                     config.Width,
+		"height":                    config.Height,
+		"mime_type":                 mimeType,
+		"client_resolved_mime_type": mimeType,
+		"timezone_offset_min":       e.chatGPTWebTimezone().OffsetMinutes,
+		"store_in_library":          false,
 	})
 	if err != nil {
-		return chatGPTWebUploadedImage{}, chatGPTWebAssetNetworkError(ctx, "signing", err)
+		return chatGPTWebUploadedImage{}, chatGPTWebAssetNetworkError(ctx, "signing", chatGPTWebLibraryUploadSize(err, len(data)))
 	}
 	var metadata map[string]any
 	if err := json.Unmarshal(metadataData, &metadata); err != nil {
@@ -1847,13 +1851,60 @@ func (e *ChatGPTWebExecutor) uploadChatGPTWebImage(ctx context.Context, client *
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return chatGPTWebUploadedImage{}, newChatGPTWebAssetStatusError(response.StatusCode, finalUploadURL, payload, response.Header, "file_upload")
 	}
-	confirmPath := "/backend-api/files/" + fileID + "/uploaded"
-	if _, _, err := e.doChatGPTWebJSON(ctx, client, credential, confirmPath, map[string]any{}); err != nil {
-		return chatGPTWebUploadedImage{}, chatGPTWebAssetNetworkError(ctx, "confirmation", err)
+	if err := e.confirmChatGPTWebImageUpload(ctx, client, credential, fileID, fileName); err != nil {
+		return chatGPTWebUploadedImage{}, chatGPTWebAssetNetworkError(ctx, "confirmation", chatGPTWebLibraryUploadSize(err, len(data)))
 	}
 	return chatGPTWebUploadedImage{
 		FileID: fileID, FileName: fileName, MIMEType: mimeType, Size: len(data), Width: config.Width, Height: config.Height,
 	}, nil
+}
+
+func (e *ChatGPTWebExecutor) confirmChatGPTWebImageUpload(ctx context.Context, client *chatgptwebauth.Client, credential *chatgptwebauth.Credential, fileID, fileName string) error {
+	const path = "/backend-api/files/process_upload_stream"
+	headers := e.chatGPTWebHeaders(credential, path, map[string]string{"accept": "text/event-stream", "content-type": "application/json"})
+	body := map[string]any{
+		"file_id": fileID, "file_name": fileName, "use_case": "multimodal", "index_for_retrieval": false,
+		"metadata": map[string]any{"store_in_library": false},
+	}
+	payload, _ := json.Marshal(body)
+	e.recordChatGPTWebRequest(ctx, credential, http.MethodPost, path, headers, payload)
+	response, err := client.DoJSONStream(ctx, http.MethodPost, e.chatGPTWebBaseURL()+path, headers, body)
+	if err != nil {
+		return chatGPTWebTransportDiagnosticError(err, path)
+	}
+	helps.RecordAPIResponseMetadata(ctx, e.configSnapshot(), response.StatusCode, chatGPTWebResponseLogHeaders(response.Header))
+	if response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusMethodNotAllowed {
+		_ = readAndCloseChatGPTWebErrorBody(response.Body)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		// Only a definitive unsupported endpoint can use legacy confirmation.
+		// Never repeat the binary upload or fall back after an ambiguous stream.
+		legacyPath := "/backend-api/files/" + url.PathEscape(fileID) + "/uploaded"
+		_, _, err := e.doChatGPTWebJSON(ctx, client, credential, legacyPath, map[string]any{})
+		return err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		data := readAndCloseChatGPTWebErrorBody(response.Body)
+		return newChatGPTWebStatusError(response.StatusCode, path, data, response.Header)
+	}
+	defer func() {
+		if errClose := response.Body.Close(); errClose != nil {
+			log.Debug("chatgpt web upload processing response close failed")
+		}
+	}()
+	wrapChatGPTWebChallengeInspectingBody(response, path)
+	if err := helps.ConsumeChatGPTWebUploadProcessing(ctx, response.Body, fileID); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		var processing *helps.UploadProcessingError
+		if errors.As(err, &processing) && processing.StorageRejected {
+			return chatGPTWebHTTPError{statusErr: chatGPTWebLocalProtocolError(http.StatusBadGateway, err.Error()), path: path, libraryStorageRejected: true}
+		}
+		return chatGPTWebLocalProtocolError(http.StatusBadGateway, "image upload processing did not complete: "+err.Error())
+	}
+	return nil
 }
 
 func (e *ChatGPTWebExecutor) doChatGPTWebAssetRequest(

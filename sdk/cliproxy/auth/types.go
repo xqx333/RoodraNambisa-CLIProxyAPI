@@ -246,6 +246,8 @@ type authInstanceState struct {
 	cleanupComplete bool
 	nextLease       uint64
 	executions      map[uint64]context.CancelCauseFunc
+	executionsIdle  chan struct{}
+	maintenance     bool
 }
 
 var errRuntimeAuthInstanceRetired = errors.New("runtime auth instance retired")
@@ -346,6 +348,10 @@ func (a *Auth) retireInstance() {
 		cancels = append(cancels, cancel)
 	}
 	state.executions = nil
+	if state.executionsIdle != nil {
+		close(state.executionsIdle)
+		state.executionsIdle = nil
+	}
 	state.mu.Unlock()
 	for _, cancel := range cancels {
 		cancel(errRuntimeAuthInstanceRetired)
@@ -398,7 +404,7 @@ func (a *Auth) BeginRuntimeExecution(ctx context.Context) (context.Context, func
 		return ctx, func() bool { return state.retired.Load() }, !state.retired.Load()
 	}
 	state.mu.Lock()
-	if state.retired.Load() {
+	if state.retired.Load() || (state.maintenance && ctx.Value(authMaintenanceContextKey{}) != state) {
 		state.mu.Unlock()
 		return ctx, func() bool { return true }, false
 	}
@@ -409,6 +415,9 @@ func (a *Auth) BeginRuntimeExecution(ctx context.Context) (context.Context, func
 	if state.executions == nil {
 		state.executions = make(map[uint64]context.CancelCauseFunc)
 	}
+	if len(state.executions) == 0 {
+		state.executionsIdle = make(chan struct{})
+	}
 	state.executions[leaseID] = cancel
 	state.mu.Unlock()
 
@@ -418,6 +427,10 @@ func (a *Auth) BeginRuntimeExecution(ctx context.Context) (context.Context, func
 		once.Do(func() {
 			state.mu.Lock()
 			delete(state.executions, leaseID)
+			if len(state.executions) == 0 && state.executionsIdle != nil {
+				close(state.executionsIdle)
+				state.executionsIdle = nil
+			}
 			retiredAtRelease = state.retired.Load()
 			state.mu.Unlock()
 			cancel(nil)

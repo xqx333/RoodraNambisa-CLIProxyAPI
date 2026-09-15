@@ -453,6 +453,9 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 	if oldImageRuntime.SanitizeErrorResponses != newImageRuntime.SanitizeErrorResponses {
 		changes = append(changes, fmt.Sprintf("images.chatgpt-web.sanitize-error-responses: %t -> %t", oldImageRuntime.SanitizeErrorResponses, newImageRuntime.SanitizeErrorResponses))
 	}
+	if oldImageRuntime.AutoCleanupLibraryOnFull != newImageRuntime.AutoCleanupLibraryOnFull {
+		changes = append(changes, fmt.Sprintf("images.chatgpt-web.auto-cleanup-library-on-full: %t -> %t", oldImageRuntime.AutoCleanupLibraryOnFull, newImageRuntime.AutoCleanupLibraryOnFull))
+	}
 	if oldImageRuntime.PollStallBreakerEnabled != newImageRuntime.PollStallBreakerEnabled {
 		changes = append(changes, fmt.Sprintf("images.chatgpt-web.poll-stall-breaker-enabled: %t -> %t", oldImageRuntime.PollStallBreakerEnabled, newImageRuntime.PollStallBreakerEnabled))
 	}

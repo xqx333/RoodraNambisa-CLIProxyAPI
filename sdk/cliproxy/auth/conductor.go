@@ -462,7 +462,9 @@ type Manager struct {
 	executorsCloseDone  chan struct{}
 	executorsCloseErr   error
 	// sessionCleanups quarantines auth IDs while stale executor sessions are being closed.
-	sessionCleanups map[string]int
+	sessionCleanups  map[string]int
+	maintenanceAuths map[string]*authMaintenanceState
+	libraryCleanup   *LibraryCleanupManager
 	// sessionCleanupInstances tracks retired instances until their auth ID leaves quarantine.
 	sessionCleanupInstances map[string]map[*authInstanceState]struct{}
 	// providerOffsets tracks per-model provider rotation state for multi-provider routing.
@@ -890,7 +892,7 @@ func (m *Manager) refreshSchedulerRoute(providers []string, model string) {
 				continue
 			}
 			auth := m.auths[authID]
-			if auth == nil || auth.Disabled || m.sessionCleanupPendingLocked(authID) {
+			if auth == nil || auth.Disabled || m.authSelectionBlockedLocked(authID) {
 				continue
 			}
 			candidates = append(candidates, authID)
@@ -3286,7 +3288,7 @@ func (m *Manager) register(ctx context.Context, auth *Auth, requireAbsent bool) 
 	authClone.instanceID = instanceID
 	authClone.instanceState = instanceState
 	m.installAuthLocked(auth.ID, authClone)
-	cleanupPending := m.sessionCleanupPendingLocked(auth.ID)
+	cleanupPending := m.authSelectionBlockedLocked(auth.ID)
 	installed := authClone.Clone()
 	if isAPIKeyAuth(existingBeforePersist) || isAPIKeyAuth(auth) {
 		m.rebuildAPIKeyModelAliasLocked(m.currentConfig())
@@ -3510,7 +3512,7 @@ func (m *Manager) Update(ctx context.Context, auth *Auth) (*Auth, error) {
 	authClone.instanceID = instanceID
 	authClone.instanceState = instanceState
 	m.installAuthLocked(auth.ID, authClone)
-	cleanupPending := m.sessionCleanupPendingLocked(auth.ID)
+	cleanupPending := m.authSelectionBlockedLocked(auth.ID)
 	installed := authClone.Clone()
 	if isAPIKeyAuth(existingBeforePersist) || isAPIKeyAuth(auth) {
 		m.rebuildAPIKeyModelAliasLocked(m.currentConfig())
@@ -3791,7 +3793,7 @@ func (m *Manager) endSessionCleanup(id string) {
 	if auth := m.auths[id]; auth != nil {
 		current = auth.Clone()
 	}
-	if m.scheduler != nil {
+	if m.scheduler != nil && m.maintenanceAuths[id] == nil {
 		m.scheduler.unblockAuth(id, current)
 	}
 	m.mu.Unlock()
@@ -5135,7 +5137,7 @@ func (m *Manager) installPreparedRequestAuthWithRuntimeMetadata(
 	installedAuth := candidate.Clone()
 	m.installAuthLocked(id, installedAuth)
 	installed := installedAuth.Clone()
-	cleanupPending := m.sessionCleanupPendingLocked(id)
+	cleanupPending := m.authSelectionBlockedLocked(id)
 	m.mu.Unlock()
 
 	if m.scheduler != nil {
@@ -6578,7 +6580,7 @@ func (m *Manager) bindSessionAffinity(ctx context.Context, providers []string, r
 	}
 	m.mu.RLock()
 	current := m.auths[auth.ID]
-	if current == nil || current.instanceID != auth.instanceID || m.sessionCleanupPendingLocked(auth.ID) {
+	if current == nil || current.instanceID != auth.instanceID || m.authSelectionBlockedLocked(auth.ID) {
 		m.mu.RUnlock()
 		return
 	}
@@ -6601,7 +6603,7 @@ func (m *Manager) bindSessionAffinity(ctx context.Context, providers []string, r
 	}
 	m.mu.RLock()
 	current = m.auths[auth.ID]
-	stillCurrent := current != nil && current.instanceID == auth.instanceID && !m.sessionCleanupPendingLocked(auth.ID)
+	stillCurrent := current != nil && current.instanceID == auth.instanceID && !m.authSelectionBlockedLocked(auth.ID)
 	m.mu.RUnlock()
 	if !stillCurrent {
 		if rollback != nil {
@@ -6670,7 +6672,7 @@ func (m *Manager) collectAntigravityCreditsCandidateAuths(routeModel string, opt
 	defer m.mu.RUnlock()
 	entries := make([]creditsCandidateEntry, 0)
 	for _, auth := range m.auths {
-		if auth == nil || auth.Disabled || auth.Status == StatusDisabled || m.sessionCleanupPendingLocked(auth.ID) {
+		if auth == nil || auth.Disabled || auth.Status == StatusDisabled || m.authSelectionBlockedLocked(auth.ID) {
 			continue
 		}
 		if pinnedAuthID != "" && auth.ID != pinnedAuthID {
@@ -9791,7 +9793,7 @@ func (m *Manager) routeAwareSelectionRequiredForProviders(providers []string, ro
 	for provider := range providerSet {
 		for id := range m.providerPrefixedAuthIDs[provider] {
 			candidate := m.auths[id]
-			if candidate == nil || candidate.Disabled || m.sessionCleanupPendingLocked(id) {
+			if candidate == nil || candidate.Disabled || m.authSelectionBlockedLocked(id) {
 				continue
 			}
 			if _, used := tried[id]; used {
@@ -9825,7 +9827,7 @@ func (m *Manager) pickNextLegacy(ctx context.Context, provider, model string, op
 		}
 	}
 	for _, candidate := range m.auths {
-		if candidate.Provider != provider || candidate.Disabled || m.sessionCleanupPendingLocked(candidate.ID) {
+		if candidate.Provider != provider || candidate.Disabled || m.authSelectionBlockedLocked(candidate.ID) {
 			continue
 		}
 		if !credentialSupportsExecutionFormat(candidate, opts.SourceFormat) || !clientKeyPriorityAllowed(ctx, candidate) {
@@ -10043,7 +10045,7 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 		}
 	}
 	for _, candidate := range m.auths {
-		if candidate == nil || candidate.Disabled || m.sessionCleanupPendingLocked(candidate.ID) {
+		if candidate == nil || candidate.Disabled || m.authSelectionBlockedLocked(candidate.ID) {
 			continue
 		}
 		if !credentialSupportsExecutionFormat(candidate, opts.SourceFormat) || !clientKeyPriorityAllowed(ctx, candidate) {
@@ -11018,6 +11020,7 @@ func (m *Manager) beginCloseExecutors() <-chan struct{} {
 }
 
 func (m *Manager) closeExecutors(executors []ProviderExecutor, done chan struct{}) {
+	_ = m.LibraryCleanup().Shutdown(context.Background())
 	if m.refreshFlightWaitObserved != nil {
 		m.refreshFlightWaitObserved()
 	}
@@ -11277,7 +11280,7 @@ func lookupMetadataTime(meta map[string]any, keys ...string) (time.Time, bool) {
 func (m *Manager) markRefreshPending(id string, now time.Time) (authRefreshJob, bool) {
 	m.mu.Lock()
 	auth, ok := m.auths[id]
-	if !ok || auth == nil || auth.Disabled || m.sessionCleanupPendingLocked(id) {
+	if !ok || auth == nil || auth.Disabled || m.authSelectionBlockedLocked(id) {
 		m.mu.Unlock()
 		return authRefreshJob{}, false
 	}
@@ -11906,7 +11909,7 @@ func (m *Manager) refreshProviderForRequestSynchronized(ctx context.Context, id,
 
 	m.mu.Lock()
 	auth := m.auths[id]
-	if auth == nil || m.sessionCleanupPendingLocked(id) || !strings.EqualFold(strings.TrimSpace(auth.Provider), provider) {
+	if auth == nil || m.authExecutionBlockedLocked(ctx, auth) || !strings.EqualFold(strings.TrimSpace(auth.Provider), provider) {
 		m.mu.Unlock()
 		return nil, fmt.Errorf("%s auth not available", provider)
 	}
@@ -12767,7 +12770,7 @@ func (m *Manager) refreshAuthExpected(ctx context.Context, id string, expected *
 	if expected != nil && auth != expected {
 		clearedPending = clearRefreshPendingMarker(auth, pendingUntil)
 		auth = nil
-	} else if auth != nil && m.sessionCleanupPendingLocked(id) {
+	} else if auth != nil && m.authExecutionBlockedLocked(ctx, auth) {
 		if expected != nil && auth == expected {
 			clearedPending = clearRefreshPendingMarker(auth, pendingUntil)
 		}
@@ -13693,7 +13696,7 @@ func (m *Manager) beginCurrentAuthExecution(ctx context.Context, auth *Auth, exe
 	m.mu.RLock()
 	current := m.auths[auth.ID]
 	managedInstance := current != nil || auth.instanceID != ""
-	if managedInstance && (current == nil || current.instanceID != auth.instanceID || current.instanceState != auth.instanceState || m.sessionCleanupPendingLocked(auth.ID)) {
+	if managedInstance && (current == nil || current.instanceID != auth.instanceID || current.instanceState != auth.instanceState || m.authExecutionBlockedLocked(ctx, current)) {
 		m.mu.RUnlock()
 		return ctx, func() bool { return true }, false
 	}

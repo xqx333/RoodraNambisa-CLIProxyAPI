@@ -143,7 +143,7 @@ func applyChatGPTWebAuthFileSummaryWithDetail(entry gin.H, auth *coreauth.Auth, 
 	if auth.LastError == nil {
 		return
 	}
-	category := safeChatGPTWebErrorCategory(auth.LastError.Code)
+	category := chatGPTWebRequestErrorCategory(auth.LastError)
 	if auth.LastError.HTTPStatus == 429 {
 		category = "rate_limited"
 	} else if category == "authentication_failed" && summarizeAuthCooldown(auth, now).Active {
@@ -167,9 +167,51 @@ func applyChatGPTWebAuthFileSummaryWithDetail(entry gin.H, auth *coreauth.Auth, 
 		HTTPStatus: auth.LastError.HTTPStatus,
 		Diagnostic: safeDiagnostic,
 	}
+	if reason, _ := entry["lifecycle_reason"].(string); reason == "" {
+		entry["status_message"] = category
+	}
 	if safeDiagnostic != nil {
 		entry["last_diagnostic"] = safeDiagnostic
 	}
+}
+
+// Runtime failures are not evidence that authentication failed. Preserve known
+// lifecycle reasons, otherwise describe only the observed HTTP/transport class.
+func chatGPTWebRequestErrorCategory(err *coreauth.Error) string {
+	if err == nil {
+		return "request_failed"
+	}
+	if reason := chatgptwebauth.SafeLifecycleReason(strings.ToLower(strings.TrimSpace(err.Code))); reason != "" && reason != "authentication_failed" {
+		return reason
+	}
+	if err.Diagnostic != nil {
+		switch err.Diagnostic.Code {
+		case "network_timeout", "request_canceled", "dns_error", "tls_error", "proxy_error", "network_error", "cloudflare_challenge":
+			return err.Diagnostic.Code
+		}
+	}
+	switch err.HTTPStatus {
+	case 401:
+		return "authentication_failed"
+	case 403:
+		return "permission_denied"
+	case 404:
+		return "not_found"
+	case 429:
+		return "rate_limited"
+	case 451:
+		return "access_restricted"
+	}
+	if err.HTTPStatus >= 500 {
+		return "upstream_error"
+	}
+	if err.HTTPStatus >= 400 {
+		return "request_rejected"
+	}
+	if err.Code == "authentication_failed" && err.Diagnostic == nil {
+		return "authentication_failed"
+	}
+	return "request_failed"
 }
 
 func chatGPTWebAccountInfoManualRecheckable(auth *coreauth.Auth) bool {

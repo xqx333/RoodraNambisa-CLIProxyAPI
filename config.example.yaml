@@ -617,6 +617,7 @@ nonstream-keepalive-interval: 0
 #     normalize-mismatched-image-mime: false # Trust supported image bytes when the declared MIME type is wrong.
 #     normalize-remote-image-mime: true # Also normalize downloaded remote images when MIME normalization is enabled.
 #     sanitize-error-responses: false # Hide Web provider, task, poll, and internal failure details from public image errors.
+#     auto-cleanup-library-on-full: false # Destructive opt-in: after an upload storage rejection, recheck capacity and clear this account's owned first-party files in the background. Never empties trash or resubmits an image.
 #     adapt-size-to-aspect-ratio: false # Map compatible explicit WxH sizes to an exact canvas/aspect-ratio prompt.
 #     strict-size: false                # Exclude Web when an explicit size cannot be adapted; requires adaptation.
 #     aspect-ratio-max-error-percent: 1 # Maximum relative error accepted for the generated output ratio.

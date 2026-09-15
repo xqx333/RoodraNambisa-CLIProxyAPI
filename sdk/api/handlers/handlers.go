@@ -331,6 +331,7 @@ func (h *BaseAPIHandler) filterChatGPTWebStrictImageSize(
 			resolved = h.Cfg.Images.ChatGPTWeb.Resolved()
 		}
 		snapshot = coreexecutor.ChatGPTWebImageConfigSnapshot{
+			AutoCleanupLibraryOnFull:     resolved.AutoCleanupLibraryOnFull,
 			RemoteImageURLEnabled:        resolved.RemoteImageURLEnabled,
 			RemoteImageURLDownloadMode:   resolved.RemoteImageURLDownloadMode,
 			NormalizeMismatchedImageMIME: resolved.NormalizeMismatchedImageMIME,
@@ -541,13 +542,16 @@ func BuildErrorResponseBody(status int, errText string) []byte {
 		code = "invalid_api_key"
 	case http.StatusForbidden:
 		errType = "permission_error"
-		code = "insufficient_quota"
+		code = "permission_denied"
 	case http.StatusTooManyRequests:
 		errType = "rate_limit_error"
 		code = "rate_limit_exceeded"
 	case http.StatusNotFound:
 		errType = "invalid_request_error"
-		code = "model_not_found"
+		code = "not_found"
+		if coreauth.IsModelNotFoundError(&coreauth.Error{HTTPStatus: status, Message: errText}) {
+			code = "model_not_found"
+		}
 	default:
 		if status >= http.StatusInternalServerError {
 			errType = "server_error"
